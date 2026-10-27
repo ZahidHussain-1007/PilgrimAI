@@ -13,5 +13,8 @@ export function createClient() {
   return createBrowserClient(supabaseUrl, supabaseAnonKey)
 }
 
-export const supabaseBrowserClient =
-  typeof window !== "undefined" ? createClient() : null
+// NOTE: do NOT create a client at module scope. This module is imported by
+// AppProviders on every page; a top-level createClient() runs during browser
+// module evaluation and crashes the whole app when env vars are missing or
+// empty (the app is designed to render an "unconfigured" state instead).
+// Call createClient() lazily, inside try/catch, as auth.service/AppProviders do.
