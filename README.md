@@ -139,5 +139,6 @@ python -m pytest tests -q           # backend tests (needs pip install -r requir
 | Login: “sign-in is not configured” | `.env` missing/empty Supabase values | Fill step 2 values, restart `npm run dev` |
 | `Failed to reach ...:6379` warnings in backend logs | Redis not running | Start Redis (step 3) |
 | `LLMUnavailable` / chat 503 with query-understanding message | `GROQ_API_KEY_1` missing/invalid | Set it in `multiagent/.env`, restart backend |
+| Chat works but no cross-turn history / no shared cache | Redis not running | App auto-falls back to `multiagent/.session_fallback.json` (per-machine). For full behavior: `docker run -d -p 6379:6379 redis:7` or WSL `redis-server`, then restart uvicorn. |
 | `npm test` refuses to start / engine warnings | Node < 22.12 | Upgrade Node (`node -v`) |
 | Google login callback error | OAuth redirect URL mismatch | Set `https://<ref>.supabase.co/auth/v1/callback` in Google Cloud + Supabase |

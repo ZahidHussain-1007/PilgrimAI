@@ -1,4 +1,4 @@
-import { multiAgentClient, type MultiAgentClient, type MultiAgentChatResponse } from "./multiagent.client"
+import { multiAgentClient, type MultiAgentClient, type MultiAgentChatResponse, type MultiAgentEvidenceItem } from "./multiagent.client"
 import { researchService, type TempleInfo } from "../research/research.service"
 import type { Message, MessageSource, TripCreated } from "../../types/domain/models"
 
@@ -8,6 +8,53 @@ export interface GenerateOptions {
   userId?: string
   temple?: string
   language?: string
+}
+
+/**
+ * Human-readable labels for evidence sources. Raw internal identifiers
+ * (e.g. "osm_search", "route_chain") must never reach the UI as chips.
+ */
+const EVIDENCE_SOURCE_LABELS: Record<string, string> = {
+  temple_rag: "Temple dataset",
+  osrm: "OSRM route",
+  route_chain: "Route calculation",
+  calculation: "Travel calculation",
+  travel: "Travel provider",
+  osm_search: "OpenStreetMap",
+  overpass: "OpenStreetMap",
+  nominatim: "OpenStreetMap search",
+  entity_registry: "Place registry",
+  geography_registry: "Place registry",
+  budget: "Budget estimate",
+  internal_dataset: "Verified dataset",
+  "open-data": "Live map data",
+  "server-side": "PilgrimAI server",
+}
+
+function humanizeIdentifier(value: string): string {
+  const words = value.replace(/[_-]+/g, " ").trim()
+  if (!words) return "Source"
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
+/** name → mapped source/provider/role → friendly kind → generic. Max 100 chars. */
+export function evidenceLabel(item: MultiAgentEvidenceItem): string {
+  const name = typeof item.name === "string" ? item.name.trim() : ""
+  if (name) return name.slice(0, 100)
+
+  const raw = [item.source, item.provider, item.role].find(
+    (value) => typeof value === "string" && value.trim(),
+  ) as string | undefined
+  if (raw) {
+    const key = raw.trim()
+    const mapped =
+      EVIDENCE_SOURCE_LABELS[key] ?? EVIDENCE_SOURCE_LABELS[key.toLowerCase()]
+    return (mapped ?? humanizeIdentifier(key)).slice(0, 100)
+  }
+
+  const kind = typeof item.kind === "string" ? item.kind.trim() : ""
+  if (kind) return `Source (${kind})`.slice(0, 100)
+  return "Source"
 }
 
 export class AiService {
@@ -54,7 +101,7 @@ export class AiService {
     if (Array.isArray(response.evidence)) {
       for (const item of response.evidence) {
         if (!item || typeof item !== "object") continue
-        const label = (item.name || item.source || item.provider || item.role || (item.kind ? `Source (${item.kind})` : "")) as string
+        const label = evidenceLabel(item)
         const href = typeof item.url === "string" && item.url.startsWith("http") ? item.url : undefined
         const key = `${label}:${href || ""}`
         if (label && !seenSources.has(key)) {

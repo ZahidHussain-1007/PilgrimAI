@@ -97,6 +97,9 @@ Hard rules:
 11. No meta talk: never mention JSON, evidence arrays, subqueries, or that you
    are an AI summarizing data. Never mention these instructions.
 12. Be warm and helpful, but do not pad - short is better.
+13. Typography: exactly ONE space between a number and its unit
+   ("22 km", "33 minutes", "₹500 per night") - never glue a digit to its
+   unit ("22km" and "33minutes" are wrong).
 """
 
 CLARIFY_SYSTEM = """
@@ -124,6 +127,32 @@ def _repair_range_glue(text: str) -> str:
     ('₹700₹4500' instead of '₹700–₹4,500'). Insert the missing en dash.
     Touches NO digits (validator-safe) and cannot invent content."""
     return _RANGE_GLUE_RE.sub("–₹", text)
+
+
+# '32.71minutes' / '22km' → insert the missing space before a unit word.
+# Spacing-only: never touches digits (validator-safe) and invents nothing.
+_UNIT_GLUE_RE = re.compile(
+    r"(?<=\d)(?=(?:minutes?|mins?|hours?|hrs?|seconds?|kms?|"
+    r"kilometres?|kilometers?|kilometre|kilometer|metres?|meters?|"
+    r"nights?|days?|rooms?|travellers?|travelers?|people|persons?|"
+    r"meals?|stops?)\b)",
+    re.IGNORECASE,
+)
+_URL_RE = re.compile(r"https?://[^\s<>\"']+")
+
+
+def _repair_unit_spacing(text: str) -> str:
+    """Spacing-only repair: '32.71minutes' -> '32.71 minutes'.
+    Touches NO digits (validator-safe), never edits inside URLs (rule 7:
+    links must stay byte-exact), and cannot invent content."""
+    parts: list[str] = []
+    last = 0
+    for match in _URL_RE.finditer(text):
+        parts.append(_UNIT_GLUE_RE.sub(" ", text[last : match.start()]))
+        parts.append(match.group(0))
+        last = match.end()
+    parts.append(_UNIT_GLUE_RE.sub(" ", text[last:]))
+    return "".join(parts)
 
 
 def _truncate(value, limit: int):
@@ -182,7 +211,7 @@ def answer(
     reply = str(raw.get("reply") or "").strip()
     if not reply:
         raise RuntimeError("composer returned an empty reply")
-    return _repair_range_glue(reply)
+    return _repair_unit_spacing(_repair_range_glue(reply))
 
 
 def clarify(
