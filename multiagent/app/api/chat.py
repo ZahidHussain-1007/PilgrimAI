@@ -1,6 +1,7 @@
 """POST /chat - thin entry point: safety -> brain -> agents -> composer."""
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 
@@ -213,8 +214,6 @@ def chat(request: ChatRequest) -> dict:
         reply = render_structured(results)
         status = "DEGRADED"
     except Exception as exc:  # noqa: BLE001 - degrade honestly, but log why
-        import logging
-
         logging.getLogger(__name__).warning(
             "compose failed, serving structured fallback: %s: %s",
             type(exc).__name__,

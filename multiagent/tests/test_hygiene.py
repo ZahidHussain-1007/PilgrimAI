@@ -113,3 +113,18 @@ def test_dead_key_is_revoked_and_skipped(monkeypatch):
     )
     assert constructed == ["dead", "good", "good"]
     llm_mod._revoked_keys.clear()
+
+
+# ---------------------------------------------------------------------------
+# module-level logging in chat (a function-local `import logging` makes every
+# >30s request crash with UnboundLocalError after the answer is composed)
+# ---------------------------------------------------------------------------
+
+def test_chat_has_no_function_local_logging():
+    from app.api import chat as chat_mod
+
+    assert "logging" in vars(chat_mod), "chat.py must import logging at module level"
+    assert "logging" not in chat_mod.chat.__code__.co_varnames, (
+        "import logging inside chat() shadows the module name and crashes "
+        "the slow-request log line with UnboundLocalError"
+    )
