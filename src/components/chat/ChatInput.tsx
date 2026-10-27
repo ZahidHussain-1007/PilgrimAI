@@ -1,0 +1,4 @@
+export function ChatInput({ value, onChange, disabled, onSend }: { value: string; onChange: (value: string) => void; disabled?: boolean; onSend: (text: string) => void }) {
+  function submit() { if (!value.trim() || disabled) return; onSend(value.trim()); onChange("") }
+  return <div className="composer-wrap"><div className="composer"><textarea value={value} onChange={(event) => onChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submit() } }} placeholder="Share what’s on your mind…" rows={1} aria-label="Message PilgrimAI"/><button className="send-button" disabled={!value.trim() || disabled} onClick={submit} aria-label="Send message">↑</button></div><div className="composer-caption"><span>Thoughtful journeys begin with a question.</span><span>↵ Send <kbd>⇧ ↵</kbd> New line</span></div></div>
+}

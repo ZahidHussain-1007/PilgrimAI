@@ -1,0 +1,14 @@
+node_modules/
+.next/
+build/
+.env
+.env.local
+.env.*.local
+!.env.example
+*.tsbuildinfo
+*-debug.log*
+logs/
+*.log
+.tmp-*
+client_secret.json
+*.zip
