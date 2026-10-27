@@ -1,6 +1,7 @@
 """POST /chat - thin entry point: safety -> brain -> agents -> composer."""
 from __future__ import annotations
 
+import time
 import uuid
 
 from fastapi import APIRouter, HTTPException
@@ -83,6 +84,7 @@ def _emergency_reply(session_id: str, history: list, user: str) -> dict:
 
 @router.post("/chat")
 def chat(request: ChatRequest) -> dict:
+    started_at = time.monotonic()
     message = request.message.strip()
     if not message:
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
@@ -182,6 +184,7 @@ def chat(request: ChatRequest) -> dict:
         )
 
     # ---- STAGE 4: composer (LLM #2) + deterministic number validation ----
+    rounds = 0  # feedback rounds taken (stays 0 if the composer fails early)
     try:
         reply = compose_answer(
             question=brain.rewritten_query,
@@ -225,6 +228,16 @@ def chat(request: ChatRequest) -> dict:
         session_id,
         _append_turn(history, message, reply, category),
     )
+
+    total_ms = int((time.monotonic() - started_at) * 1000)
+    if total_ms > 30_000:
+        logging.getLogger(__name__).warning(
+            "slow chat: total=%dms category=%s status=%s feedback_rounds=%d",
+            total_ms,
+            category,
+            status,
+            rounds,
+        )
 
     return _response(
         session_id=session_id,

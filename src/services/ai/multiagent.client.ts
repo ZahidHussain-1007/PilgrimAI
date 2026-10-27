@@ -35,7 +35,7 @@ export class MultiAgentClient {
   private readonly baseUrl: string
   private readonly timeoutMs: number
 
-  constructor(baseUrl?: string, timeoutMs = 30000) {
+  constructor(baseUrl?: string, timeoutMs = 180000) {
     this.baseUrl = (baseUrl || process.env.MULTIAGENT_API_URL || "http://127.0.0.1:8000").replace(/\/+$/, "")
     this.timeoutMs = timeoutMs
   }

@@ -81,11 +81,35 @@ def _unwrap(value: Any) -> Any:
     return value
 
 
+def _is_specific_booking_url(url: str) -> bool:
+    """A booking link must lead somewhere useful for THIS hotel.
+
+    Dataset scraping artifacts include site homepages and bare section
+    bookmarks (e.g. a Google Hotels page with no query/entity), which send
+    users to a generic search instead of the hotel. Drop those; keep every
+    URL that carries an identifier, a query, or a deeper path.
+    """
+    cleaned = str(url or "").strip().rstrip("/")
+    if not cleaned.startswith(("http://", "https://")):
+        return False
+    parsed = urllib.parse.urlparse(cleaned)
+    path = parsed.path.rstrip("/")
+    if not path:
+        # Bare homepage: useless platform root (makemytrip.com, goibibo.com…)
+        # UNLESS it carries a query (maps.google.com/?q=… is a real target).
+        # Official hotel homepages are NOT lost: they travel via the
+        # separate `website` field in evidence.
+        return bool(parsed.query)
+    if path in ("/travel/hotels", "/hotels") and not parsed.query:
+        return False  # section bookmark without a specific hotel
+    return True
+
+
 def _norm_hotel(raw: dict, meta: dict) -> dict[str, Any]:
     booking = {
         str(k): str(v)
         for k, v in (raw.get("booking_links") or {}).items()
-        if isinstance(v, str) and v.startswith("http")
+        if isinstance(v, str) and v.startswith("http") and _is_specific_booking_url(v)
     }
     ratings = raw.get("ratings") or {}
     record = {
@@ -529,6 +553,7 @@ def _hotel_evidence(record: dict[str, Any]) -> dict[str, Any]:
         "check_out": record["check_out"],
         "phones": record["phones"],
         "map_link": record["map_link"],
+        "website": record["website"],
         "about": record["about"],
     }
 

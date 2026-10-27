@@ -16,6 +16,16 @@ class LLMUnavailable(RuntimeError):
     """Raised when every configured LLM key failed or none are configured."""
 
 
+# Keys that answered 401 are dead for this process: never retry them.
+_revoked_keys: set[str] = set()
+
+
+def _is_auth_failure(exc: Exception) -> bool:
+    if getattr(exc, "status_code", None) == 401:
+        return True
+    return type(exc).__name__ == "AuthenticationError"
+
+
 def strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
     """Force Groq strict-mode requirements recursively:
     additionalProperties=false + required = all properties, at every level."""
@@ -50,8 +60,12 @@ def strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
 
 
 def _clients() -> list[Groq]:
-    keys = [settings.groq_api_key_1, settings.groq_api_key_2]
-    return [Groq(api_key=key.strip()) for key in keys if key and key.strip()]
+    keys = [
+        key.strip()
+        for key in (settings.groq_api_key_1, settings.groq_api_key_2)
+        if key and key.strip()
+    ]
+    return [Groq(api_key=key) for key in keys if key not in _revoked_keys]
 
 
 def complete_json(
@@ -67,6 +81,11 @@ def complete_json(
     clients = _clients()
 
     if not clients:
+        if _revoked_keys:
+            raise LLMUnavailable(
+                "all Groq keys were revoked after 401 auth failures - "
+                "replace GROQ_API_KEY_1/GROQ_API_KEY_2 in multiagent/.env"
+            )
         raise LLMUnavailable("no Groq API keys configured")
 
     body = strict_schema(schema)
@@ -114,6 +133,12 @@ def complete_json(
                 type(exc).__name__,
                 exc,
             )
+            if _is_auth_failure(exc):
+                # Dead key: stop paying its failed round-trip on every call.
+                try:
+                    _revoked_keys.add(str(client.api_key))
+                except Exception:  # noqa: BLE001 - best effort
+                    pass
             if index < len(clients):
                 continue
 
