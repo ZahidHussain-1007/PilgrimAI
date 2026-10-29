@@ -135,3 +135,41 @@ def test_negative_cache_ttl_is_short():
 
     assert 0 < ttl <= settings.ttl_negative_s
     redis_client.delete(key)
+
+
+def test_missing_end_still_presents_known_place():
+    """One endpoint given -> resolve & present it + honest note, instead of
+    a bare 'missing' error (answer-first behavior)."""
+    from app.agents import travel as travel_agent
+
+    result = travel_agent.run(
+        {
+            "category": "travel_route",
+            "question": "How do I reach Warangal?",
+            "origin": "Warangal",
+            "destination": None,
+            "mode": "driving",
+        }
+    )
+
+    assert result["status"] == "COMPLETED"
+    kinds = [e.get("kind") for e in result["evidence"]]
+    assert "place" in kinds
+    note = next(e for e in result["evidence"] if e.get("kind") == "note")
+    assert note["key"] == "route_end_missing"
+    assert "destination" in note["error"]
+
+
+def test_both_ends_missing_is_still_an_error():
+    from app.agents import travel as travel_agent
+
+    result = travel_agent.run(
+        {
+            "category": "travel_route",
+            "question": "How do I reach it?",
+            "origin": None,
+            "destination": None,
+            "mode": "driving",
+        }
+    )
+    assert result["status"] == "ERROR"

@@ -116,16 +116,38 @@ def run(subquery: dict) -> dict:
     origin_raw = subquery.get("origin")
     destination_raw = subquery.get("destination")
 
-    if not origin_raw or not str(origin_raw).strip() or not destination_raw or not str(destination_raw).strip():
+    origin_missing = not origin_raw or not str(origin_raw).strip()
+    destination_missing = not destination_raw or not str(destination_raw).strip()
+
+    if origin_missing or destination_missing:
+        if origin_missing and destination_missing:
+            return {
+                "status": "ERROR",
+                "error": "origin_or_destination_missing",
+                "evidence": [
+                    {
+                        "source": "travel",
+                        "kind": "error",
+                        "error": "origin_or_destination_missing",
+                    }
+                ],
+            }
+        # One endpoint known: resolve and present it (name + map link) so the
+        # reply can answer with what we have, then ask only for the missing end.
+        known_role = "destination" if origin_missing else "origin"
+        known_raw = destination_raw if origin_missing else origin_raw
+        missing_field = "origin" if origin_missing else "destination"
+        known = resolve_place(str(known_raw).strip())
         return {
-            "status": "ERROR",
-            "error": "origin_or_destination_missing",
+            "status": "COMPLETED",
             "evidence": [
+                _place_evidence(known_role, known),
                 {
                     "source": "travel",
-                    "kind": "error",
-                    "error": "origin_or_destination_missing",
-                }
+                    "kind": "note",
+                    "key": "route_end_missing",
+                    "error": f"Route needs the {missing_field} to calculate distance and directions.",
+                },
             ],
         }
 

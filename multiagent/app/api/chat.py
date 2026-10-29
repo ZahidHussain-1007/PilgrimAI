@@ -56,6 +56,7 @@ def _response(
     clarification: str | None = None,
     evidence: list | None = None,
     budget: dict | None = None,
+    follow_ups: list | None = None,
 ) -> dict:
     return {
         "session_id": session_id,
@@ -66,6 +67,7 @@ def _response(
         "status": status,
         "evidence": evidence or [],
         "budget": budget,  # structured budget block (budget category only)
+        "follow_ups": [str(f) for f in (follow_ups or [])][:3],
     }
 
 
@@ -186,22 +188,37 @@ def chat(request: ChatRequest) -> dict:
 
     # ---- STAGE 4: composer (LLM #2) + deterministic number validation ----
     rounds = 0  # feedback rounds taken (stays 0 if the composer fails early)
+    follow_ups: list[str] = []
+
+    def _composed(value) -> tuple[str, list[str]]:
+        # compose.answer returns {"reply", "follow_ups"}; tolerate plain str
+        # (older mocks/tests).
+        if isinstance(value, dict):
+            return str(value.get("reply") or ""), [
+                str(f) for f in (value.get("follow_ups") or []) if str(f).strip()
+            ]
+        return str(value), []
+
     try:
-        reply = compose_answer(
-            question=brain.rewritten_query,
-            language=brain.language,
-            results=results,
+        reply, follow_ups = _composed(
+            compose_answer(
+                question=brain.rewritten_query,
+                language=brain.language,
+                results=results,
+            )
         )
 
         missing = find_missing_numbers(reply, results)
         rounds = 0
         while missing and rounds < MAX_FEEDBACK_ROUNDS:
             rounds += 1
-            reply = compose_answer(
-                question=brain.rewritten_query,
-                language=brain.language,
-                results=results,
-                feedback=missing,
+            reply, follow_ups = _composed(
+                compose_answer(
+                    question=brain.rewritten_query,
+                    language=brain.language,
+                    results=results,
+                    feedback=missing,
+                )
             )
             missing = find_missing_numbers(reply, results)
 
@@ -244,6 +261,7 @@ def chat(request: ChatRequest) -> dict:
         reply=reply,
         status=status,
         evidence=collect_evidence(results),
+        follow_ups=follow_ups,
         budget=next(
             (r.get("budget") for r in results if r.get("category") == "budget"),
             None,

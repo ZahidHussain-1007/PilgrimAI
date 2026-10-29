@@ -1,0 +1,118 @@
+{
+  "temple_id": "T0024",
+  "name": "Birla Mandir Hyderabad",
+  "alternate_names": [
+    "Birla Mandir",
+    "Birla Temple",
+    "Birla Temple Hyderabad",
+    "Sri Venkateswara Swamy Temple, Birla Mandir",
+    "Naubath Pahad Temple"
+  ],
+  "multilingual": {
+    "names": {
+      "en": "Birla Mandir, Hyderabad",
+      "te": "బిర్లా మందిర్, హైదరాబాద్",
+      "hi": "बिरला मंदिर, हैदराबाद"
+    },
+    "alternate_spellings": [
+      "Birla Mandir",
+      "Birla Mandir Hyderabad",
+      "Birla Temple",
+      "Naubat Pahad Temple"
+    ]
+  },
+  "deity": {
+    "presiding_deity": "Lord Venkateswara (Balaji), an incarnation of Lord Vishnu",
+    "other_deities": []
+  },
+  "temple_type": "Hindu Vaishnavite Temple",
+  "religion": "Hinduism",
+  "category": "Vaishnavite / Venkateswara Temple",
+  "location": {
+    "landmark": "Naubat Pahad",
+    "area": "Lakdikapul, near Telangana Assembly",
+    "city": "Hyderabad",
+    "district": "Hyderabad District",
+    "state": "Telangana",
+    "country": "India",
+    "address": "Birla Mandir, Naubat Pahad, Lakdikapul, Hyderabad, Telangana",
+    "latitude": 17.4061,
+    "longitude": 78.469,
+    "timezone": "Asia/Kolkata"
+  },
+  "overview": "Birla Mandir is a white-marble Hindu temple crowning Naubat Pahad hill in Hyderabad, dedicated to Lord Venkateswara (Balaji). Opened in 1976 after a decade of construction, it is built entirely of white Rajasthan marble and offers panoramic views of Hyderabad city and Hussain Sagar Lake. Entry is free and the temple is open every day of the week in a morning and an evening session.",
+  "summary": "Free-entry white-marble Venkateswara temple atop Naubat Pahad (Hyderabad), open 7:00 AM–12:00 PM and 3:00 PM–9:00 PM daily, with city and Hussain Sagar views.",
+  "history": "The idea of building Birla Mandir in Hyderabad was to create a peaceful spiritual place open to everyone. Construction began in 1966 and took about 10 years; the temple was inaugurated in 1976 by Swami Ranganathananda of the Ramakrishna Mission under the aegis of the Birla Foundation. Nearly 2,000 tonnes of white marble were brought from Rajasthan for the project, and the main idol is modelled after the deity at Tirumala.",
+  "architecture": "The temple sits on Naubat Pahad, a hill roughly 280 feet high, and is constructed entirely of white marble imported from Rajasthan. Its elevated setting gives devotees and visitors wide views of the city, Hussain Sagar Lake, and the surrounding landscape.",
+  "architectural_style": "White marble temple architecture blending North and South Indian temple styles",
+  "darshan_timings": [
+    {
+      "day": "Daily (all days of the week)",
+      "morning": "7:00 AM – 12:00 PM",
+      "evening": "3:00 PM – 9:00 PM",
+      "note": "Closed 12:00 PM – 3:00 PM for the midday break"
+    }
+  ],
+  "darshan_and_tickets": {
+    "entry_fee": "Free",
+    "ticket_notes": "General darshan and entry are free for all visitors; voluntary donations are accepted. Special pooja participation may have its own offering. Photography is not permitted inside the sanctum.",
+    "booking": "No ticket booking required for general darshan."
+  },
+  "best_time_to_visit": "Weekday mornings (7:00 AM – 9:00 AM) are the least crowded; evenings are pleasant for the lit temple and city views. October to March is the most comfortable season in Hyderabad.",
+  "travel": {
+    "how_to_reach": "The temple is centrally located on Naubat Pahad near Lakdikapul, well connected by road from all parts of Hyderabad. It is about 5 km from Hyderabad Railway Station; autos and cabs reach the base of the hill directly.",
+    "nearest_railway_station": "Hyderabad Railway Station (about 5 km)",
+    "nearest_metro": "Lakdikapul / Assembly stations",
+    "parking": "Parking is available at the base of the hill near Assembly."
+  },
+  "faq": [
+    {
+      "question": "What are the timings of Birla Mandir Hyderabad?",
+      "answer": "7:00 AM to 12:00 PM and 3:00 PM to 9:00 PM, every day of the week."
+    },
+    {
+      "question": "Is there an entry fee?",
+      "answer": "No. Entry is completely free; donations are optional."
+    },
+    {
+      "question": "When is it closed?",
+      "answer": "It closes during the midday break from 12:00 PM to 3:00 PM."
+    }
+  ],
+  "query_variations": [
+    "birla mandir timings",
+    "birla mandir hyderabad darshan",
+    "birla temple entry fee",
+    "how to reach birla mandir",
+    "birla mandir naubat pahad",
+    "go to birla mandir",
+    "birla mandir warangal to hyderabad"
+  ],
+  "sources": [
+    "https://www.hyderabadtourism.travel/birla-mandir-hyderabad (timings, free entry — checked 2026-10-29)",
+    "https://luxevista.in/birla-mandir-hyderabad/ (history 1966–1976, 2,000 tonnes marble, 280 ft hill, address — checked 2026-10-29)",
+    "https://www.jiohotstar.com.in/birla-mandir-hyderabad/ (1976 inauguration, deity, railway distance — checked 2026-10-29)",
+    "https://travelshexa.com/birla-mandir-hyderabad-timings-guide/ (session table, free entry — checked 2026-10-29)",
+    "https://aroundship.com/birla-mandir-hyderabad-tickets/ (free darshan, no photography inside — checked 2026-10-29)"
+  ],
+  "quality_check": {
+    "metadata": {
+      "verified": [
+        "name",
+        "alternate_names",
+        "deity",
+        "temple_type",
+        "address",
+        "latitude",
+        "longitude",
+        "darshan_timings",
+        "entry_fee",
+        "history",
+        "sources"
+      ],
+      "notes": "Assembled from multiple public tourism/temple guides on 2026-10-29; timings agree across sources."
+    }
+  },
+  "last_verified": "2026-10-29",
+  "images": []
+}

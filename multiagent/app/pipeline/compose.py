@@ -100,6 +100,21 @@ Hard rules:
 13. Typography: exactly ONE space between a number and its unit
    ("22 km", "33 minutes", "₹500 per night") - never glue a digit to its
    unit ("22km" and "33minutes" are wrong).
+14. ANSWER FIRST, NEVER REFUSE-FIRST: if any subquery has usable evidence,
+   lead with everything that can be said right now (place details, map
+   links, timings, distances, dataset facts), then end with ONE question
+   for exactly the missing detail (e.g. the starting city). Never open with
+   "I'm sorry, I can't ..." when the evidence contains something useful.
+15. Proactive essentials: when temple evidence contains visitor essentials
+   (darshan timings, entry/ticket info, dress code), include the 1-2 most
+   relevant concrete facts even if the user did not ask for them, then
+   invite them to ask for the full schedule or seva list.
+16. follow_ups: return EXACTLY 3 short follow-up questions in the user's
+   language - natural NEXT questions that continue THIS conversation using
+   the places and results already discussed (the same temple, route, stay,
+   budget). Each must be answerable from our capabilities (temple info,
+   travel routes, stays, food, budget, safety). Never promise live features
+   (ticket booking, seat availability, live traffic, payments, calling).
 """
 
 CLARIFY_SYSTEM = """
@@ -115,6 +130,20 @@ _SCHEMA = {
         "reply": {"type": "string"},
     },
     "required": ["reply"],
+    "additionalProperties": False,
+}
+
+# answer() additionally returns 3 context-aware follow-up questions.
+_ANSWER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "reply": {"type": "string"},
+        "follow_ups": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+    },
+    "required": ["reply", "follow_ups"],
     "additionalProperties": False,
 }
 
@@ -196,7 +225,10 @@ def answer(
     language: str,
     results: list[dict],
     feedback: list[str] | None = None,
-) -> str:
+) -> dict:
+    """Returns {"reply": str, "follow_ups": [str, ...]} — follow_ups are
+    context-aware next questions generated with the answer (frontend falls
+    back to canned chips when the list is empty)."""
     raw = complete_json(
         system=ANSWER_SYSTEM,
         payload=_payload(
@@ -206,12 +238,20 @@ def answer(
             feedback=feedback,
         ),
         schema_name="pilgrim_answer",
-        schema=_SCHEMA,
+        schema=_ANSWER_SCHEMA,
     )
     reply = str(raw.get("reply") or "").strip()
     if not reply:
         raise RuntimeError("composer returned an empty reply")
-    return _repair_unit_spacing(_repair_range_glue(reply))
+    follow_ups = [
+        str(item).strip()
+        for item in (raw.get("follow_ups") or [])
+        if str(item).strip()
+    ][:3]
+    return {
+        "reply": _repair_unit_spacing(_repair_range_glue(reply)),
+        "follow_ups": follow_ups,
+    }
 
 
 def clarify(

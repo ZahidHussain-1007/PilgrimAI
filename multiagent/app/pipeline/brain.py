@@ -81,6 +81,17 @@ For every user message you do ALL of these, in one pass:
      are named, and `mode`: "driving" (default), "walking" (walk/foot/pedal),
      or "transit" (bus/train/metro/public transport). If a place is truly
      missing, leave the field null.
+   - ENDPOINT CARRYOVER: trip endpoints may be stated in recent_history.
+     When the user continues an earlier trip ("im traveling from warangal"
+     after "i want to go to birla mandir"), carry the other endpoint forward
+     from recent_history - NEVER leave it null and never re-ask for an
+     endpoint the conversation already gave.
+   - When the user wants to GO somewhere but an endpoint is still missing
+     after carryover, emit BOTH: a temple_info subquery describing the named
+     place (so the answer leads with real information) AND the travel_route
+     subquery with the missing endpoint null (the reply will then ask only
+     for that missing detail). Example: "i want to go to yadadri" ->
+     temple_info(yadadri) + travel_route(destination=Yadadri, origin=null).
    - `depends_on`: id of an earlier subquery whose RESULT this one needs
      (e.g. "nearby attractions of that temple" after "tell me about Yadadri").
      Most queries have no dependencies.
@@ -102,8 +113,9 @@ Rules:
   accommodation, restaurant, budget, or multi, you MUST output at least ONE
   subquery. NEVER an empty subqueries list for those categories. Only
   greeting/help_meta/smalltalk/emergency use [].
-- recent_history is context only; never repeat previous tasks unless the user
-  refers to them.
+- recent_history is context: resolve references AND trip endpoints (origin,
+  destination, mode, dates) from it. Repeat a previous task only when the
+  user refers to it.
 - Output ONLY the JSON object matching the schema.
 
 ============================================================
@@ -118,6 +130,12 @@ Message: "yadadri temple timings"
 
 Message: "hyderabad to warangal by bus"
 {"language":"en","category":"travel_route","rewritten_query":"How do I travel from Hyderabad to Warangal by bus?","direct_reply":null,"subqueries":[{"id":"q1","category":"travel_route","question":"How do I travel from Hyderabad to Warangal by bus?","entities":[],"origin":"Hyderabad","destination":"Warangal","mode":"transit","depends_on":[]}]}
+
+Message: "im traveling from warangal"  (recent_history user turn: "i want to go to birla mandir")
+{"language":"en","category":"travel_route","rewritten_query":"I want to travel from Warangal to Birla Mandir, Hyderabad.","direct_reply":null,"subqueries":[{"id":"q1","category":"travel_route","question":"How do I travel from Warangal to Birla Mandir, Hyderabad?","entities":[{"mention":"Birla Mandir","entity_type":"temple"}],"origin":"Warangal","destination":"Birla Mandir","mode":"driving","depends_on":[]}]}
+
+Message: "i want to go to yadadri"
+{"language":"en","category":"multi","rewritten_query":"Plan travel to Yadadri Temple and tell me about it.","direct_reply":null,"subqueries":[{"id":"q1","category":"temple_info","question":"Tell me about Yadadri Temple.","entities":[{"mention":"Yadadri","entity_type":"temple"}],"origin":null,"destination":null,"mode":null,"depends_on":[]},{"id":"q2","category":"travel_route","question":"How do I reach Yadadri Temple?","entities":[],"origin":null,"destination":"Yadadri","mode":"driving","depends_on":[]}]}
 
 Message: "hotels near yadadri temple"
 {"language":"en","category":"accommodation","rewritten_query":"Which hotels are near Yadadri Temple?","direct_reply":null,"subqueries":[{"id":"q1","category":"accommodation","question":"Which hotels are near Yadadri Temple?","entities":[{"mention":"Yadadri","entity_type":"temple"}],"origin":null,"destination":null,"mode":null,"depends_on":[]}]}

@@ -197,3 +197,63 @@ def test_reply_never_contains_json_meta():
     reply = response.json()["reply"]
     assert "evidence" not in reply
     assert "subqueries" not in reply
+
+
+def test_backend_follow_ups_threaded_to_response():
+    """compose.answer now returns {"reply", "follow_ups"}; the API must
+    surface follow_ups so the UI shows context-aware chips."""
+    results = _temple_results()
+
+    with patch(
+        "app.api.chat.understand",
+        return_value=_brain_temple(),
+    ), patch(
+        "app.api.chat.execute",
+        return_value=results,
+    ), patch(
+        "app.api.chat.compose_answer",
+        return_value={
+            "reply": "Darshan runs 6:30 AM to 1:00 PM as per temple records.",
+            "follow_ups": [
+                "What are the seva timings at this temple?",
+                "Where to stay near this temple?",
+                "How do I reach from Hyderabad?",
+            ],
+        },
+    ), patch("app.api.chat.get_session", return_value=None), patch(
+        "app.api.chat.save_session", return_value=True
+    ):
+        response = client.post(
+            "/chat",
+            json={"message": "yadadri temple timings?"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["follow_ups"][0] == "What are the seva timings at this temple?"
+    assert len(data["follow_ups"]) == 3
+
+
+def test_plain_string_compose_still_supported():
+    """Old-style mocked compose returning a bare string must not crash."""
+    results = _temple_results()
+
+    with patch(
+        "app.api.chat.understand",
+        return_value=_brain_temple(),
+    ), patch(
+        "app.api.chat.execute",
+        return_value=results,
+    ), patch(
+        "app.api.chat.compose_answer",
+        return_value="Darshan runs 6:30 AM to 1:00 PM as per temple records.",
+    ), patch("app.api.chat.get_session", return_value=None), patch(
+        "app.api.chat.save_session", return_value=True
+    ):
+        response = client.post(
+            "/chat",
+            json={"message": "yadadri temple timings?"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["follow_ups"] == []

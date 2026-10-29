@@ -25,6 +25,8 @@ export interface MultiAgentChatResponse {
   status: "COMPLETED" | "DIRECT" | "EMERGENCY" | "NEEDS_CLARIFICATION" | "DEGRADED" | string
   evidence?: MultiAgentEvidenceItem[]
   budget?: Record<string, unknown> | null
+  /** Context-aware next questions generated with the answer (backend). */
+  follow_ups?: string[] | null
 }
 
 export interface MultiAgentHealthResponse {
