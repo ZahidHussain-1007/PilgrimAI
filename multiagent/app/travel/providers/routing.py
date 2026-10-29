@@ -77,8 +77,11 @@ def route_osrm(
             f"{destination.longitude},{destination.latitude}"
         )
         params = urllib.parse.urlencode({"overview": "false"})
+        base_url = (
+            settings.osrm_foot_url if profile == "walking" else settings.osrm_url
+        )
         url = (
-            f"{settings.osrm_url.rstrip('/')}"
+            f"{base_url.rstrip('/')}"
             f"/route/v1/{profile}/{coordinates}?{params}"
         )
 

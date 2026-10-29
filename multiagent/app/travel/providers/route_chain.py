@@ -78,19 +78,12 @@ def route_with_fallbacks(
     errors: list[ProviderError] = []
     providers: list[tuple[str, RouteProvider]] = []
 
-    if settings.google_maps_api_key:
-        from app.travel.providers.google_routes import route_google
-
-        providers.append(("google_routes", route_google))
-
     if settings.osrm_enabled:
         providers.append(("osrm", route_osrm))
 
     for provider_name, provider in providers:
         try:
             kwargs = {"mode": mode}
-            if provider_name == "osrm":
-                kwargs["mode"] = mode  # routing validates profile per mode
 
             facts = provider(origin, destination, **kwargs)
 

@@ -1,1 +1,0 @@
-Authentication mocks belong here.

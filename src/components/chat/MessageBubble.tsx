@@ -1,8 +1,10 @@
+import { useState } from "react"
 import type { Message } from "../../types/message"
 import { SourceList } from "./SourceList"
 import { RichText } from "./RichText"
 import { TripCreatedCard } from "./TripCreatedCard"
 import { UserAvatar } from "../ui/UserAvatar"
+import { speak, stopSpeaking, ttsSupported } from "../../lib/speech"
 
 export function MessageBubble({
   message,
@@ -12,6 +14,19 @@ export function MessageBubble({
   onFollowUp?: (question: string) => void
 }) {
   const user = message.role === "user"
+  const [speaking, setSpeaking] = useState(false)
+
+  function toggleSpeak() {
+    if (speaking) {
+      stopSpeaking()
+      setSpeaking(false)
+      return
+    }
+    const text = message.content ?? ""
+    const started = speak(text, undefined, () => setSpeaking(false))
+    setSpeaking(started)
+  }
+
   return (
     <article
       className={`message-row ${user ? "justify-end" : "justify-start"}`}
@@ -30,7 +45,20 @@ export function MessageBubble({
             : "rounded-2xl rounded-bl-sm border border-[#e9e2d6] bg-[#fffefa] px-4 py-3.5 text-[#28271f] shadow-[0_1px_2px_rgba(40,39,31,0.04)]"
         }`}
       >
-        <p className="message-author">{user ? "You" : "PilgrimAI"}</p>
+        <p className="message-author">
+          <span>{user ? "You" : "PilgrimAI"}</span>
+          {!user && ttsSupported() && message.content ? (
+            <button
+              type="button"
+              className="ml-1 rounded-full border border-[#e9e2d6] px-2 py-0.5 text-xs transition-colors hover:border-[#d9c9ae] hover:bg-[#f6efe3]"
+              aria-label={speaking ? "Stop reading aloud" : "Read aloud"}
+              title={speaking ? "Stop reading aloud" : "Read aloud"}
+              onClick={toggleSpeak}
+            >
+              {speaking ? "⏹" : "🔊"}
+            </button>
+          ) : null}
+        </p>
         {message.content &&
           (user ? (
             <p className="whitespace-pre-wrap text-sm leading-6">

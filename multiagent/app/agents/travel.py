@@ -99,10 +99,7 @@ def _run_nearby(subquery: dict) -> dict:
         "key": "nearby_search_unavailable",
         "error": "Nearby places search is not available in this deployment yet.",
     }
-    if settings.google_maps_api_key:
-        note["hint"] = "Nearby search integration is not enabled yet."
-    else:
-        note["hint"] = settings.fallback_transit_link
+    note["hint"] = settings.fallback_transit_link
 
     return {
         "status": "COMPLETED",
@@ -157,12 +154,8 @@ def run(subquery: dict) -> dict:
     ]
     evidence.extend(_route_evidence(route_result))
 
-    selected = (route_result.metadata or {}).get("selected_provider")
-
-    if mode == "transit" and not (
-        route_result.status in {"COMPLETED", "PARTIAL"}
-        and selected == "google_routes"
-    ):
+    if mode == "transit":
+        # No transit provider in a keyless deployment: honest Redbus fallback.
         evidence.append(
             {
                 "source": "travel",

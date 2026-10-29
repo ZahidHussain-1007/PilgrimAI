@@ -31,35 +31,19 @@ def _require_redis() -> None:
         pytest.skip(f"redis unavailable: {exc}")
 
 
-def test_provider_order_google_then_osrm_then_haversine(monkeypatch):
-    """With a Google key configured, google runs first; its failure falls to
-    OSRM; OSRM failure falls to Haversine (PARTIAL)."""
+def test_provider_order_osrm_then_haversine(monkeypatch):
+    """OSRM failure falls back to Haversine (PARTIAL). Google was removed
+    (keyless deployment) - OSRM is the only live provider now."""
     origin, destination = _coordinates()
     calls: list[str] = []
 
-    monkeypatch.setattr(settings, "google_maps_api_key", "test-key")
     monkeypatch.setattr(settings, "osrm_enabled", True)
-
-    def fake_google(*args, **kwargs):
-        calls.append("google")
-        raise RuntimeError("google down")
 
     def fake_osrm(*args, **kwargs):
         calls.append("osrm")
         raise RuntimeError("osrm down")
 
-    monkeypatch.setattr(
-        "app.travel.providers.google_routes.route_google", fake_google
-    )
     monkeypatch.setattr(route_chain, "route_osrm", fake_osrm)
-    monkeypatch.setattr(
-        route_chain.settings, "google_maps_api_key", "test-key"
-    )
-
-    # route_chain imports route_google lazily; patch the module it imports from
-    import app.travel.providers.google_routes as google_module
-
-    monkeypatch.setattr(google_module, "route_google", fake_google)
 
     result = route_chain.route_with_fallbacks(
         origin, destination, mode="driving"
@@ -67,14 +51,36 @@ def test_provider_order_google_then_osrm_then_haversine(monkeypatch):
 
     assert result.status == "PARTIAL"
     assert result.metadata["selected_provider"] == "haversine"
-    assert calls[0] == "google"
-    assert "osrm" in calls
+    assert calls == ["osrm"]
+
+
+def test_walking_uses_foot_endpoint(monkeypatch):
+    """Walking must hit osrm_foot_url: the public OSRM demo answers
+    'walking' with car data (identical distance for driving and foot)."""
+    origin, destination = _coordinates()
+    seen: dict[str, str] = {}
+
+    def fake_request(url, *, headers=None, timeout_seconds):
+        seen["url"] = url
+        return {
+            "code": "Ok",
+            "routes": [{"distance": 47894.0, "duration": 38320.0}],
+        }
+
+    monkeypatch.setattr(settings, "osrm_enabled", True)
+    monkeypatch.setattr(routing, "_request_json", fake_request)
+
+    facts = routing.route_osrm(origin, destination, mode="walking")
+
+    assert settings.osrm_foot_url.rstrip("/") in seen["url"]
+    assert "/route/v1/walking/" in seen["url"]
+    distance = next(f for f in facts if f.key == "distance")
+    assert distance.value == 47.89
 
 
 def test_haversine_when_everything_disabled(monkeypatch):
     origin, destination = _coordinates()
 
-    monkeypatch.setattr(settings, "google_maps_api_key", None)
     monkeypatch.setattr(settings, "osrm_enabled", False)
 
     result = route_chain.route_with_fallbacks(

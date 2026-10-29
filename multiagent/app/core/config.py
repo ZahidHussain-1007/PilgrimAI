@@ -14,14 +14,13 @@ class Settings(BaseSettings):
     redis_port: int = 6379
     session_ttl_s: int = 86_400
 
-    # --- Google Maps (optional; when empty the chain falls back to OSRM) ---
-    google_maps_api_key: str | None = None
-    google_routes_url: str = "https://routes.googleapis.com/directions/v2:computeRoutes"
-    google_timeout_s: float = 6.0
-
-    # --- OSRM (free fallback, no key) ---
+    # --- OSRM (free, no key) ---
+    # Driving uses the public OSRM demo. Walking uses the routed-foot
+    # instance: the demo answers "walking" with CAR data (identical 69 km
+    # for driving and foot on the same pair), so foot gets its own endpoint.
     osrm_enabled: bool = True
     osrm_url: str = "https://router.project-osrm.org"
+    osrm_foot_url: str = "https://routing.openstreetmap.de/routed-foot"
     osrm_timeout_s: float = 5.0
 
     # --- Nominatim geocoding fallback (registry -> geography -> nominatim) ---
