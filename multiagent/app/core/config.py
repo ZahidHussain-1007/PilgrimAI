@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     nominatim_user_agent: str = "PilgrimAI/1.0"
     nominatim_timeout_s: float = 5.0
     nominatim_min_interval_s: float = 1.1
+    # Service scope (Telangana + margin): min_lat,min_lon,max_lat,max_lon.
+    # Live geocoder results outside this box are dropped - the product
+    # answers for Telangana only, never Kolkata/Jaipur/... candidates.
+    geo_scope_bbox: str = "15.6,76.6,20.3,81.5"
 
     # --- OpenStreetMap Overpass (keyless nearby search, failover list) ---
     overpass_urls: str = (

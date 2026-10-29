@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core.config import settings
 from app.services.entity_registry import get_entity_registry
 from app.travel.geography import get_geography_registry
 from app.travel.providers.nominatim import (
@@ -153,6 +154,54 @@ def _resolve_named_entity(
         mention=query
     )
 
+    if result.get("status") == "AMBIGUOUS":
+        # Multiple OUR-data matches: clarify with registry names (always
+        # Telangana-scoped) instead of falling through to the world geocoder.
+        candidates: list[PlaceCandidate] = []
+        for item in result.get("candidates") or []:
+            if not isinstance(item, dict):
+                continue
+            entity = registry.get(item.get("entity_id"))
+            coordinates = _coordinates_from_location(
+                (entity or {}).get("location")
+            )
+            if coordinates is None:
+                continue
+            candidates.append(
+                PlaceCandidate(
+                    display_name=str(
+                        item.get("canonical_name") or query
+                    ),
+                    latitude=coordinates.latitude,
+                    longitude=coordinates.longitude,
+                    source="entity_registry",
+                    place_type=item.get("entity_type"),
+                    importance=1.0,
+                )
+            )
+
+        if len(candidates) >= 2:
+            raise TravelResolverClarificationError(
+                query=query,
+                candidates=candidates,
+            )
+        if len(candidates) == 1:
+            only = candidates[0]
+            return ResolvedPlace(
+                query=query,
+                display_name=only.display_name,
+                coordinates=Coordinate(
+                    latitude=only.latitude,
+                    longitude=only.longitude,
+                ),
+                source="entity_registry",
+                canonical_entity_id=str(
+                    (result.get("candidates") or [{}])[0].get("entity_id", "")
+                ),
+                canonical_entity_type=only.place_type,
+                confidence=1.0,
+            )
+
     if result.get("status") != "RESOLVED":
         return None
 
@@ -232,6 +281,29 @@ def _resolve_from_geography_registry(
     )
 
 
+def _within_geo_scope(
+    candidates: list[PlaceCandidate],
+) -> list[PlaceCandidate]:
+    """Drop live-geocoder hits outside the configured service area
+    (Telangana + margin) so clarification lists never show Kolkata/Jaipur
+    style results."""
+    if not candidates:
+        return []
+    try:
+        min_lat, min_lon, max_lat, max_lon = (
+            float(part)
+            for part in settings.geo_scope_bbox.split(",")
+        )
+    except (AttributeError, TypeError, ValueError):
+        return candidates
+    return [
+        candidate
+        for candidate in candidates
+        if min_lat <= candidate.latitude <= max_lat
+        and min_lon <= candidate.longitude <= max_lon
+    ]
+
+
 def resolve_place(
     value: Any,
 ) -> ResolvedPlace:
@@ -292,12 +364,20 @@ def resolve_place(
     if geographic_place is not None:
         return geographic_place
 
-    candidates = nominatim_search(
+    raw_candidates = nominatim_search(
         query,
         limit=5,
     )
+    candidates = _within_geo_scope(raw_candidates)
 
     if not candidates:
+        # Distinguish "no geocoder hit" from "hits exist but all outside
+        # our Telangana service area" - never offer out-of-scope places.
+        if raw_candidates:
+            raise TravelResolverError(
+                f"'{query}' matches places only outside the Telangana "
+                "service area; PilgrimAI covers Telangana."
+            )
         raise TravelResolverError(
             f"Unable to resolve travel place: {query}"
         )

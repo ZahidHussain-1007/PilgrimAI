@@ -1,9 +1,9 @@
 {
   "counts": {
     "temple_files": 23,
-    "accommodation_files": 142,
+    "accommodation_files": 136,
     "restaurant_files": 120,
-    "emergency_files": 23,
+    "emergency_files": 24,
     "entities": 279,
     "aliases": 639,
     "related_mentions": 657

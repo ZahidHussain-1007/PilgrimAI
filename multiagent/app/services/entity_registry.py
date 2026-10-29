@@ -35,6 +35,13 @@ class EntityRegistry:
     FUZZY_THRESHOLD = 0.88
     RELATED_FUZZY_THRESHOLD = 0.82
 
+    # Generic words naive users append ("birla mandir temple") that must not
+    # block an otherwise exact alias match.
+    GENERIC_MATCH_TOKENS = {
+        "temple", "mandir", "shrine", "devasthanam", "devastanam",
+        "the", "of", "in", "near", "at", "a", "an", "to", "for", "and",
+    }
+
     RELATED_TYPE_COMPATIBILITY = {
         "person": {
             "person",
@@ -193,6 +200,7 @@ class EntityRegistry:
             return []
 
         candidates = []
+        mention_tokens = set(normalized_mention.split())
 
         for alias, entity_ids in self._aliases.items():
             similarity = SequenceMatcher(
@@ -200,6 +208,17 @@ class EntityRegistry:
                 normalized_mention,
                 alias,
             ).ratio()
+
+            # Containment: the full alias inside the mention counts as a
+            # strong match ("birla mandir temple" -> alias "birla mandir"),
+            # as long as the alias carries at least one meaningful token.
+            alias_tokens = set(alias.split())
+            if (
+                alias_tokens
+                and alias_tokens <= mention_tokens
+                and (alias_tokens - self.GENERIC_MATCH_TOKENS)
+            ):
+                similarity = max(similarity, self.FUZZY_THRESHOLD + 0.05)
 
             if similarity < self.FUZZY_THRESHOLD:
                 continue

@@ -257,3 +257,77 @@ def test_plain_string_compose_still_supported():
 
     assert response.status_code == 200
     assert response.json()["follow_ups"] == []
+
+
+# --- v7: clarification offers candidate options as follow_ups ------------
+
+def _brain_birla() -> BrainResult:
+    return BrainResult(
+        language="en",
+        category="temple_info",
+        rewritten_query="birla mandir temple",
+        direct_reply=None,
+        subqueries=[
+            BrainSubquery(
+                id="q1",
+                category="temple_info",
+                question="birla mandir temple",
+                entities=[
+                    {"mention": "birla mandir temple", "entity_type": "temple"}
+                ],
+            )
+        ],
+    )
+
+
+def test_clarify_sends_candidate_options_as_follow_ups():
+    results = [
+        {
+            "step_id": "q1",
+            "category": "temple_info",
+            "question": "Which Birla Mandir did you mean?",
+            "status": "NEEDS_CLARIFICATION",
+            "query": "birla mandir temple",
+            "candidates": [
+                {
+                    "display_name": "Birla Mandir, Khairatabad, Hyderabad",
+                    "latitude": 17.4061,
+                    "longitude": 78.469,
+                    "source": "entity_registry",
+                },
+                {
+                    "display_name": "Birla Mandir, Warangal",
+                    "latitude": 17.9689,
+                    "longitude": 79.5941,
+                    "source": "entity_registry",
+                },
+            ],
+            "evidence": [],
+        }
+    ]
+
+    with patch(
+        "app.api.chat.understand",
+        return_value=_brain_birla(),
+    ), patch(
+        "app.api.chat.execute",
+        return_value=results,
+    ), patch(
+        "app.api.chat.compose_clarify",
+        return_value="Which Birla Mandir did you mean?",
+    ), patch("app.api.chat.get_session", return_value=None), patch(
+        "app.api.chat.save_session", return_value=True
+    ):
+        response = client.post(
+            "/chat",
+            json={"message": "birla mandir temple"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "NEEDS_CLARIFICATION"
+    assert data["follow_ups"] == [
+        "Birla Mandir, Khairatabad, Hyderabad",
+        "Birla Mandir, Warangal",
+    ]
+    assert data["clarification"] == "Which Birla Mandir did you mean?"

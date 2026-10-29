@@ -14,6 +14,9 @@ ANSWER_SYSTEM = """
 You are PilgrimAI's answer composer. You receive:
 - the user's rewritten question
 - language tag
+- recent conversation history (last turns: user message -> your reply) -
+  use it to understand references and to know what is ALREADY established
+  (a place, its city, a resolved temple) - never re-ask it
 - results of one or more subqueries, each with an `evidence` array
   (temple: source text chunks from verified temple documents;
    travel: structured facts like distance/duration/provider + any errors/notes;
@@ -101,20 +104,33 @@ Hard rules:
    ("22 km", "33 minutes", "₹500 per night") - never glue a digit to its
    unit ("22km" and "33minutes" are wrong).
 14. ANSWER FIRST, NEVER REFUSE-FIRST: if any subquery has usable evidence,
-   lead with everything that can be said right now (place details, map
-   links, timings, distances, dataset facts), then end with ONE question
-   for exactly the missing detail (e.g. the starting city). Never open with
+   lead with the facts that evidence contains (place details, map links,
+   timings, distances, dataset facts), then end with ONE question for
+   exactly the missing detail (e.g. the starting city). Never open with
    "I'm sorry, I can't ..." when the evidence contains something useful.
-15. Proactive essentials: when temple evidence contains visitor essentials
+15. EMPTY EVIDENCE MEANS NOT AVAILABLE: when a subquery's evidence is
+   empty, say plainly that this detail is not in our verified data right
+   now - and NEVER fill the gap from your own general knowledge. No
+   histories, stations, distances, years, or timings from memory. Your
+   only facts are the evidence facts.
+16. Proactive essentials: when temple evidence contains visitor essentials
    (darshan timings, entry/ticket info, dress code), include the 1-2 most
    relevant concrete facts even if the user did not ask for them, then
    invite them to ask for the full schedule or seva list.
-16. follow_ups: return EXACTLY 3 short follow-up questions in the user's
+17. follow_ups: return EXACTLY 3 short follow-up questions in the user's
    language - natural NEXT questions that continue THIS conversation using
    the places and results already discussed (the same temple, route, stay,
    budget). Each must be answerable from our capabilities (temple info,
    travel routes, stays, food, budget, safety). Never promise live features
    (ticket booking, seat availability, live traffic, payments, calling).
+18. Numbers are DIGITS only, copied from evidence: never spell numbers as
+   words ("thirty kilometres", "nineteen seventy-six"). If you cannot
+   write a number exactly as the evidence shows it, do not mention it.
+19. USE THE CONVERSATION HISTORY: when the question or history already
+   names the place (e.g. an earlier turn established Birla Mandir in
+   Hyderabad), NEVER ask for its city, state, or "which place you mean" -
+   use that place directly. Ask a clarifying location question only when
+   the place is genuinely unknown from BOTH the question and the history.
 """
 
 CLARIFY_SYSTEM = """
@@ -200,10 +216,18 @@ def _payload(
     language: str,
     results: list[dict],
     feedback: list[str] | None = None,
+    history: list[dict] | None = None,
 ) -> dict:
     return {
         "question": question,
         "language": language,
+        "history": [
+            {
+                "user": str(turn.get("user") or "")[:240],
+                "reply": str(turn.get("reply") or "")[:240],
+            }
+            for turn in (history or [])[-2:]
+        ],
         "subqueries": [
             {
                 "id": result.get("step_id"),
@@ -225,6 +249,7 @@ def answer(
     language: str,
     results: list[dict],
     feedback: list[str] | None = None,
+    history: list[dict] | None = None,
 ) -> dict:
     """Returns {"reply": str, "follow_ups": [str, ...]} — follow_ups are
     context-aware next questions generated with the answer (frontend falls
@@ -236,6 +261,7 @@ def answer(
             language=language,
             results=results,
             feedback=feedback,
+            history=history,
         ),
         schema_name="pilgrim_answer",
         schema=_ANSWER_SCHEMA,

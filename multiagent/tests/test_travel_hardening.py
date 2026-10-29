@@ -173,3 +173,115 @@ def test_both_ends_missing_is_still_an_error():
         }
     )
     assert result["status"] == "ERROR"
+
+
+# --- v7: Telangana scope + naive-user query matching ---------------------
+
+def test_registry_matches_when_user_appends_generic_word():
+    """Naive user types 'birla mandir temple' -> must resolve to the
+    canonical Birla Mandir (Hyderabad) entity, not miss the registry."""
+    from app.services.entity_registry import get_entity_registry
+
+    result = get_entity_registry().resolve(
+        mention="birla mandir temple"
+    )
+    assert result.get("status") == "RESOLVED"
+    assert "T0009" in str(result)
+
+
+def test_scope_filter_drops_places_outside_telangana(monkeypatch):
+    from app.travel import resolver as resolver_module
+    from app.travel.schemas import PlaceCandidate
+
+    kolkata = PlaceCandidate(
+        display_name="Birla Mandir, Kolkata",
+        latitude=22.5852,
+        longitude=88.3639,
+        source="nominatim",
+    )
+    monkeypatch.setattr(
+        resolver_module,
+        "nominatim_search",
+        lambda _q, limit=5: [kolkata],
+    )
+
+    with pytest.raises(resolver_module.TravelResolverError) as exc:
+        resolver_module.resolve_place("zzunknown qqq place")
+
+    assert "Telangana" in str(exc.value)
+
+
+def test_scope_filter_keeps_places_inside_telangana(monkeypatch):
+    from app.travel import resolver as resolver_module
+    from app.travel.schemas import PlaceCandidate
+
+    hyderabad = PlaceCandidate(
+        display_name="Birla Mandir, Hyderabad",
+        latitude=17.4061,
+        longitude=78.469,
+        source="nominatim",
+    )
+    monkeypatch.setattr(
+        resolver_module,
+        "nominatim_search",
+        lambda _q, limit=5: [hyderabad],
+    )
+
+    place = resolver_module.resolve_place("zzunknown qqq place")
+    assert place.coordinates.latitude == pytest.approx(17.4061)
+    assert place.coordinates.longitude == pytest.approx(78.469)
+
+
+# --- v8: travel_nearby answers from OUR temple dataset -------------------
+
+def test_nearby_uses_entity_anchor_and_dataset():
+    """'best tourist places near by birla mandir' with null endpoints must
+    resolve via the entity mention and answer from the verified
+    nearby_places dataset - no place_missing, no world places."""
+    from app.agents import travel as travel_agent
+
+    result = travel_agent.run(
+        {
+            "category": "travel_nearby",
+            "question": "Best tourist places near by birla mandir",
+            "origin": None,
+            "destination": None,
+            "entities": ["birla mandir"],
+            "temple_ids": None,
+        }
+    )
+
+    assert result["status"] == "COMPLETED"
+    kinds = [e.get("kind") for e in result["evidence"]]
+    assert "place" in kinds
+    nearby = [
+        e
+        for e in result["evidence"]
+        if e.get("field_name") == "nearby_places"
+    ]
+    assert nearby, result["evidence"]
+    assert all(e.get("source") == "temple_dataset" for e in nearby)
+    assert any("Hussain Sagar" in e.get("text", "") for e in nearby)
+
+
+def test_nearby_without_any_anchor_is_place_missing():
+    from app.agents import travel as travel_agent
+
+    result = travel_agent.run(
+        {
+            "category": "travel_nearby",
+            "question": "what is nearby?",
+            "origin": None,
+            "destination": None,
+            "entities": [],
+            "temple_ids": None,
+        }
+    )
+    assert result["status"] == "ERROR"
+    assert result["error"] == "place_missing"
+
+
+def test_travel_nearby_gets_registry_resolution():
+    from app.agents.registry import REGISTRY_RESOLVED_CATEGORIES
+
+    assert "travel_nearby" in REGISTRY_RESOLVED_CATEGORIES

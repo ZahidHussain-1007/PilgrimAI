@@ -42,6 +42,18 @@ def _log_latency(
     )
 
 
+def _viewbox() -> str:
+    """Nominatim viewbox (left,top,right,bottom) from the service scope."""
+    try:
+        min_lat, min_lon, max_lat, max_lon = (
+            float(part)
+            for part in settings.geo_scope_bbox.split(",")
+        )
+    except (AttributeError, TypeError, ValueError):
+        return ""
+    return f"{min_lon},{max_lat},{max_lon},{min_lat}"
+
+
 def search(
     query: str,
     *,
@@ -58,14 +70,19 @@ def search(
 
         _rate_limit()
 
-        params = urllib.parse.urlencode(
-            {
-                "q": query,
-                "format": "jsonv2",
-                "limit": limit,
-                "addressdetails": 1,
-            }
-        )
+        params_map: dict[str, Any] = {
+            "q": query,
+            "format": "jsonv2",
+            "limit": limit,
+            "addressdetails": 1,
+            # Bias towards the Telangana service scope (resolver still
+            # hard-filters out-of-scope hits).
+            "bounded": 0,
+        }
+        viewbox = _viewbox()
+        if viewbox:
+            params_map["viewbox"] = viewbox
+        params = urllib.parse.urlencode(params_map)
 
         request = urllib.request.Request(
             f"{settings.nominatim_url.rstrip('/')}/search?{params}",

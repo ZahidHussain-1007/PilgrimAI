@@ -1,6 +1,6 @@
 # PilgrimAI (Unified Full-Stack Application)
 
-PilgrimAI is a unified Next.js application built with React 19, TypeScript, Tailwind CSS, and Supabase. It integrates AI-powered pilgrimage guidance, trip planning, itinerary management, conversation history, and user favourites.
+PilgrimAI is a unified Next.js application built with React 19, TypeScript, Tailwind CSS, and Supabase. It integrates AI-powered pilgrimage guidance, trip planning, itinerary management, conversation history, and user favourites. It supports **multilingual voice interaction** — dictate questions and hear answers aloud (English / हिन्दी / తెలుగు) through the browser's built-in Web Speech API, with no extra keys or services.
 
 ## Architecture
 
@@ -16,7 +16,8 @@ Next.js Route Handlers (/api/chat, /api/trips, /api/itineraries,
    └── AiService → MULTIAGENT_API_URL (FastAPI backend, port 8000)
             safety → brain (LLM #1) → agents (Qdrant RAG / OSRM / data)
             → composer (LLM #2) → validator → reply + evidence
-            (Redis holds short-term chat sessions, TTL 24 h)
+            (Redis holds short-term chat sessions, TTL 24 h —
+             automatic file fallback when Redis is absent)
 ```
 
 Two runtimes are required: **Next.js (port 3000)** and the **multiagent backend (port 8000)**. If the backend is not running, every chat message returns `503 Multi-agent AI service is currently unavailable`.
@@ -25,7 +26,8 @@ Two runtimes are required: **Next.js (port 3000)** and the **multiagent backend 
 
 - **Node.js 22.12 or later** (vitest 5 requires it; `npm test` fails on older Node)
 - **Python 3.10 – 3.13** (backend)
-- **Redis** running locally on `localhost:6379` (chat sessions + caches)
+- **Redis** on `localhost:6379` (recommended — chat sessions + caches). Without
+  it the app still works: sessions fall back to `multiagent/.session_fallback.json`.
 - A **Supabase project** (Google OAuth + database)
 - A **Groq API key** (backend LLM calls)
 

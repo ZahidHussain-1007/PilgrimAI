@@ -177,6 +177,24 @@ def chat(request: ChatRequest) -> dict:
             session_id,
             _append_turn(history, message, question, category),
         )
+
+        # Offer the candidate place names as one-tap options: a naive user
+        # picks "Birla Mandir Hyderabad" instead of retyping the question.
+        option_names: list[str] = []
+        for candidate in (clarification_step.get("candidates") or [])[:3]:
+            name = ""
+            if isinstance(candidate, dict):
+                name = str(
+                    candidate.get("display_name")
+                    or candidate.get("name")
+                    or candidate.get("canonical_name")
+                    or ""
+                ).strip()
+            elif isinstance(candidate, str):
+                name = candidate.strip()
+            if name:
+                option_names.append(name[:100])
+
         return _response(
             session_id=session_id,
             category=category,
@@ -184,6 +202,7 @@ def chat(request: ChatRequest) -> dict:
             status="NEEDS_CLARIFICATION",
             clarification=question,
             evidence=[],
+            follow_ups=option_names,
         )
 
     # ---- STAGE 4: composer (LLM #2) + deterministic number validation ----
@@ -205,6 +224,7 @@ def chat(request: ChatRequest) -> dict:
                 question=brain.rewritten_query,
                 language=brain.language,
                 results=results,
+                history=history[-2:],
             )
         )
 
@@ -218,6 +238,7 @@ def chat(request: ChatRequest) -> dict:
                     language=brain.language,
                     results=results,
                     feedback=missing,
+                    history=history[-2:],
                 )
             )
             missing = find_missing_numbers(reply, results)

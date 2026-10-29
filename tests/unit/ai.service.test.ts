@@ -188,3 +188,91 @@ describe("AiService & MultiAgent Integration Unit Tests", () => {
     await expect(client.sendChat("   ")).rejects.toThrow(BadRequestError)
   })
 })
+
+describe("context-aware follow-ups", () => {
+  const baseResponse = (
+    overrides: Partial<MultiAgentChatResponse>,
+  ): MultiAgentChatResponse => ({
+    session_id: "conv-1",
+    category: "travel_route",
+    intent: "travel_route",
+    reply: "Warangal to Birla Mandir is about 150 km by road.",
+    clarification: null,
+    status: "COMPLETED",
+    evidence: [],
+    budget: null,
+    ...overrides,
+  })
+
+  it("prefers backend follow_ups over canned chips", async () => {
+    const client = new MultiAgentClient("http://127.0.0.1:8000")
+    const service = new AiService(client)
+    vi.spyOn(client, "sendChat").mockResolvedValue(
+      baseResponse({
+        follow_ups: [
+          "What is the route from Warangal by bus?",
+          "Which hotels are near Birla Mandir?",
+          "What is the darshan schedule there?",
+          "ignored fourth item",
+        ],
+      }),
+    )
+
+    const message = await service.generateResponse({ message: "warangal to birla" })
+    expect(message.followUpQuestions).toEqual([
+      "What is the route from Warangal by bus?",
+      "Which hotels are near Birla Mandir?",
+      "What is the darshan schedule there?",
+    ])
+  })
+
+  it("falls back to canned chips when follow_ups is empty", async () => {
+    const client = new MultiAgentClient("http://127.0.0.1:8000")
+    const service = new AiService(client)
+    vi.spyOn(client, "sendChat").mockResolvedValue(
+      baseResponse({ follow_ups: [] }),
+    )
+
+    const message = await service.generateResponse({ message: "warangal to birla" })
+    expect(message.followUpQuestions?.length).toBeGreaterThan(0)
+    expect(message.followUpQuestions?.[0]).not.toBe("")
+  })
+
+  it("ignores malformed follow_ups entries", async () => {
+    const client = new MultiAgentClient("http://127.0.0.1:8000")
+    const service = new AiService(client)
+    vi.spyOn(client, "sendChat").mockResolvedValue(
+      baseResponse({
+        follow_ups: ["", "  ", null as unknown as string, "Valid next question?"],
+      }),
+    )
+
+    const message = await service.generateResponse({ message: "x" })
+    expect(message.followUpQuestions).toEqual(["Valid next question?"])
+  })
+
+  it("prefers backend candidate options as clarification chips", async () => {
+    const client = new MultiAgentClient("http://127.0.0.1:8000")
+    const service = new AiService(client)
+    vi.spyOn(client, "sendChat").mockResolvedValue(
+      baseResponse({
+        category: "temple_info",
+        intent: "temple_info",
+        reply: "Which Birla Mandir did you mean?",
+        clarification: "Which Birla Mandir did you mean?",
+        status: "NEEDS_CLARIFICATION",
+        follow_ups: [
+          "Birla Mandir, Khairatabad, Hyderabad",
+          "Birla Mandir, Warangal",
+        ],
+      }),
+    )
+
+    const message = await service.generateResponse({ message: "birla mandir temple" })
+    expect(message.content).toContain("Which Birla Mandir")
+    expect(message.followUpQuestions).toEqual([
+      "Birla Mandir, Khairatabad, Hyderabad",
+      "Birla Mandir, Warangal",
+    ])
+  })
+})
