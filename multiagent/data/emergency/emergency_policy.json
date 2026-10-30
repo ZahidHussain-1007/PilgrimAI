@@ -1,7 +1,6 @@
 {
   "patterns": [
     "\\bambulance\\b",
-    "\\bemergency\\b",
     "\\bmedical emergency\\b",
     "\\bcall police\\b",
     "\\bpolice emergency\\b",
@@ -37,6 +36,9 @@
     "గుండెపోటు",
     "మంటలు",
     "పోలీసులు కావాలి"
+  ],
+  "geo_exempt_patterns": [
+    "\\bemergency\\b"
   ],
   "reply": "This may be an emergency. Contact your local emergency service immediately (112 in India) or ask someone nearby for urgent help. If you are in immediate danger, prioritize getting to a safe place and contacting emergency responders."
 }

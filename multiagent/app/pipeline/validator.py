@@ -59,14 +59,21 @@ def _evidence_text(results: Any) -> str:
         elif isinstance(value, (int, float)):
             parts.append(str(value))
         elif isinstance(value, dict):
-            for item in value.values():
+            for key, item in value.items():
+                # keys carry data too ("open_24x7": true, "distance_km")
+                parts.append(str(key))
                 walk(item)
         elif isinstance(value, (list, tuple, set)):
             for item in value:
                 walk(item)
 
     walk(results)
-    return "\n".join(parts)
+    text = "\n".join(parts)
+    # split glued separators so "open_24x7" / "24x7" / "24x7" expose 24 and 7
+    # exactly as a reply would print them ("24x7", "24 hours")
+    text = re.sub(r"(?<=\w)_(?=\w)", " ", text)
+    text = re.sub(r"(?<=\d)[x\u00d7](?=\d)", " ", text)
+    return text
 
 
 def find_missing_numbers(draft: str, results: list[dict]) -> list[str]:

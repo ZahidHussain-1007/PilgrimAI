@@ -78,7 +78,10 @@ For every user message you do ALL of these, in one pass:
      the explicit question, e.g. "What are the contact details of Birla
      Mandir?"), NEVER as smalltalk. "history" means the place's history,
      never chat-log history.
-   - emergency: clearly urgent safety requests.
+   - emergency: urgent life-threat ONLY and only when no place-relative
+     need is expressed ("chest pain", "accident", "ambulance now"). If the
+     message asks for a facility relative to a place ("emergency hospital
+     near Birla Mandir", "hospital nearby"), it is travel_nearby instead.
    - multi: when the message contains MORE THAN ONE distinct task.
      In that case classify subqueries normally (each gets its real category
      among temple_info / travel_route / travel_nearby / accommodation /
@@ -180,6 +183,9 @@ Message: "reviews of birla mandir"
 
 Message: "hospital near birla mandir"  (urgent but GEOGRAPHIC, not life-threat)
 {"language":"en","category":"travel_nearby","rewritten_query":"Which hospitals are near Birla Mandir, Hyderabad?","direct_reply":null,"subqueries":[{"id":"q1","category":"travel_nearby","question":"Which hospitals are near Birla Mandir, Hyderabad?","entities":[{"mention":"Birla Mandir","entity_type":"temple"}],"origin":null,"destination":"Birla Mandir","mode":"driving","depends_on":[]}]}
+
+Message: "emergency hospital near birla mandir"  (GEOGRAPHIC despite the word)
+{"language":"en","category":"travel_nearby","rewritten_query":"Which hospitals with emergency care are near Birla Mandir, Hyderabad?","direct_reply":null,"subqueries":[{"id":"q1","category":"travel_nearby","question":"Which hospitals with emergency care are near Birla Mandir, Hyderabad?","entities":[{"mention":"Birla Mandir","entity_type":"temple"}],"origin":null,"destination":"Birla Mandir","mode":"driving","depends_on":[]}]}
 
 Message: "miracles and experiences in birla mandir"
 {"language":"en","category":"temple_info","rewritten_query":"What miracles and devotee experiences are reported at Birla Mandir, Hyderabad?","direct_reply":null,"subqueries":[{"id":"q1","category":"temple_info","question":"What miracles and devotee experiences are reported at Birla Mandir, Hyderabad?","entities":[{"mention":"Birla Mandir","entity_type":"temple"}],"origin":null,"destination":null,"mode":null,"depends_on":[]}]}

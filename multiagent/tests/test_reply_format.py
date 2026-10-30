@@ -89,3 +89,31 @@ def test_phone_numbers_after_newlines_are_grounded():
     assert find_missing_numbers(draft, results) == []
     # a genuinely missing number is still caught
     assert find_missing_numbers("Call 040-2323-5099.", results) == ["5099"]
+
+
+def test_24x7_and_underscore_keys_are_groundable():
+    """open_24x7 (underscore+glued) and '24x7' (x-glued) must both ground
+    a composer writing '24x7' or '24 hours' - no false hallucination flags."""
+    from app.pipeline.validator import find_missing_numbers
+
+    results = [
+        {
+            "evidence": [
+                {
+                    "source": "temple_emergency",
+                    "name": "Gleneagles Hospital",
+                    "open_24x7": True,
+                    "hours": "Open 24 hours",
+                    "distance_km": 1.0,
+                }
+            ]
+        }
+    ]
+    assert find_missing_numbers(
+        "Open 24\u00d7 emergency care, about 1.0 km away.", results
+    ) == []
+    assert find_missing_numbers(
+        "The hospital is open 24 hours.", results
+    ) == []
+    # unrelated numbers still flagged
+    assert find_missing_numbers("It is 9.9 km away.", results) == ["9.9"]

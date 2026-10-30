@@ -370,6 +370,8 @@ _OVERPASS_FILTERS = {
     "parking": ("amenity", r"^parking$"),
     "fuel": ("amenity", r"^fuel$"),
     "bus_station": ("amenity", r"^bus_station$"),
+    "fire_station": ("amenity", r"^fire_station$"),
+    "ambulance": ("emergency", r"^ambulance_station$"),
 }
 
 

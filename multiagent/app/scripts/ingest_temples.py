@@ -24,7 +24,23 @@ def main() -> None:
 
     print("Embedding and indexing into Qdrant...")
 
-    count = ingest_documents(chunks)
+    try:
+        count = ingest_documents(chunks)
+    except RuntimeError as exc:
+        if "already accessed" in str(exc).lower() or "Qdrant" in str(exc):
+            # local Qdrant allows ONE process: the running uvicorn server
+            # holds the lock. Stop it, ingest, then start it again.
+            raise SystemExit(
+                "\nThe local vector store is in use by another process - "
+                "almost always the running uvicorn server.\n\n"
+                "  1) Stop uvicorn (Ctrl+C in its terminal)\n"
+                "  2) Re-run:  python -m app.scripts.ingest_temples\n"
+                "  3) Start it again:  python -m uvicorn app.main:app "
+                "--host 127.0.0.1 --port 8000\n"
+                "\n(The store keeps exactly one copy of every chunk: "
+                "re-running is always safe.)"
+            )
+        raise
 
     print(f"Indexed: {count}")
 

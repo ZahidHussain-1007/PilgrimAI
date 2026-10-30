@@ -3,6 +3,9 @@ evidence (facts + calculations + notes). Google first when a key is configured,
 then OSRM, then Haversine (approximate)."""
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from app.agents import temple as _temple_agent
 from app.agents.accommodation import _osm_evidence, _overpass_search
 from app.core.config import settings
@@ -98,7 +101,9 @@ def _temple_id_for(anchor: str) -> str | None:
 
 # question keywords -> LIVE OpenStreetMap kind (RAG dataset + realtime)
 _NEARBY_KIND_KEYWORDS: list[tuple[tuple[str, ...], str]] = [
-    (("hospital", "clinic", "emergency", "ambulance", "medical", "doctor",
+    (("ambulance",), "ambulance"),
+    (("fire station", "fire brigade", "fire engine"), "fire_station"),
+    (("hospital", "clinic", "emergency", "medical", "doctor",
       "unwell", "sick", "fever"), "hospital"),
     (("pharmacy", "chemist", "medicine", "medical shop"), "pharmacy"),
     (("police", "station house"), "police"),
@@ -110,6 +115,98 @@ _NEARBY_KIND_KEYWORDS: list[tuple[tuple[str, ...], str]] = [
     (("restaurant", "food near", "eat near", "dining", "meals near"),
      "restaurant"),
 ]
+
+# verified per-temple emergency dataset (data/emergency/T*.json, 23 files)
+_EMERGENCY_DATA_DIR = (
+    Path(__file__).resolve().parents[2] / "data" / "emergency"
+)
+_emergency_index: dict[str, dict] | None = None
+
+# question/kind -> sections inside the emergency dataset
+_EMERGENCY_SECTION_HINTS: list[tuple[tuple[str, ...], str]] = [
+    (("ambulance",), "ambulance_services"),
+    (("fire station", "fire brigade", "fire"), "fire_rescue"),
+    (("pharmacy", "chemist", "medicine", "medical shop"), "pharmacies"),
+    (("police", "station house"), "police"),
+    (("hospital", "clinic", "medical", "doctor", "health", "unwell",
+      "sick", "fever", "emergency"), "hospitals"),
+]
+
+
+def _emergency_index_load() -> dict[str, dict]:
+    global _emergency_index
+    if _emergency_index is None:
+        index: dict[str, dict] = {}
+        if _EMERGENCY_DATA_DIR.exists():
+            for path in sorted(_EMERGENCY_DATA_DIR.glob("T*.json")):
+                try:
+                    record = json.loads(path.read_text(encoding="utf-8"))
+                except Exception:  # noqa: BLE001 - skip broken file, keep rest
+                    continue
+                temple_id = str(record.get("temple_id") or "")
+                if temple_id:
+                    index[temple_id] = record
+        _emergency_index = index
+    return _emergency_index
+
+
+def _emergency_sections(question: str, live_kind: str | None) -> list[str]:
+    lowered = (question or "").lower()
+    sections: list[str] = []
+    for keywords, section in _EMERGENCY_SECTION_HINTS:
+        if section in sections:
+            continue
+        if any(keyword in lowered for keyword in keywords):
+            sections.append(section)
+    if live_kind == "hospital" and "hospitals" not in sections:
+        sections.append("hospitals")
+    if live_kind == "police" and "police" not in sections:
+        sections.append("police")
+    if live_kind == "pharmacy" and "pharmacies" not in sections:
+        sections.append("pharmacies")
+    return sections
+
+
+def _emergency_evidence(
+    temple_id: str, question: str, live_kind: str | None
+) -> list[dict]:
+    """Verified facilities from data/emergency/T*.json (hospitals, police,
+    pharmacies, ambulance, fire) - always available, no network needed."""
+    record = _emergency_index_load().get(temple_id)
+    if not record:
+        return []
+    sections = _emergency_sections(question, live_kind)
+    evidence: list[dict] = []
+    for section in sections:
+        for item in (record.get("emergency") or {}).get(section) or []:
+            if not isinstance(item, dict) or not item.get("name"):
+                continue
+            phone = str(
+                item.get("phone") or item.get("emergency_phone") or ""
+            ).strip()
+            evidence.append(
+                {
+                    "source": "temple_emergency",
+                    "kind": "poi",
+                    "source_tier": "verified-data",
+                    "name": str(item.get("name") or "").strip(),
+                    "category": section,
+                    "cuisine": None,
+                    "phone": phone or None,
+                    "website": str(item.get("website") or "").strip() or None,
+                    "address": str(item.get("address") or "").strip() or None,
+                    "latitude": item.get("latitude"),
+                    "longitude": item.get("longitude"),
+                    "distance_km": item.get("distance_from_temple_km"),
+                    "travel_time": item.get("estimated_travel_time"),
+                    "hours": str(item.get("opening_hours") or "").strip()
+                    or None,
+                    "open_24x7": item.get("24x7_emergency"),
+                    "google_maps_url": item.get("google_maps_url"),
+                    "temple_id": temple_id,
+                }
+            )
+    return evidence[:6]
 
 
 def _live_kind(question: str) -> str | None:
@@ -181,6 +278,16 @@ def _run_nearby(subquery: dict) -> dict:
         place = resolve_place(place_anchor)
         evidence.append(_place_evidence("near", place))
 
+    pre_live_kind = _live_kind(question)
+    # Verified per-temple emergency dataset (hospitals/police/pharmacies/
+    # ambulance/fire) - no network needed, answers even when OSM is down.
+    emergency_items: list[dict] = []
+    if temple_id:
+        emergency_items = _emergency_evidence(
+            temple_id, question, pre_live_kind
+        )
+        evidence.extend(emergency_items)
+
     # Verified dataset layer: nearby attractions of an OUR temple always
     # answer from the curated temple JSON (never model memory).
     nearby_evidence: list[dict] = []
@@ -211,7 +318,7 @@ def _run_nearby(subquery: dict) -> dict:
             pois, osm_error = [], f"{type(exc).__name__}: {exc}"
         static_names = [
             str(item.get("name") or "")
-            for item in nearby_evidence
+            for item in [*nearby_evidence, *emergency_items]
         ]
         osm_items = []
         for poi in pois:
