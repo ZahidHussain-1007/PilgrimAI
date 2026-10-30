@@ -4,6 +4,7 @@ then OSRM, then Haversine (approximate)."""
 from __future__ import annotations
 
 from app.agents import temple as _temple_agent
+from app.agents.accommodation import _osm_evidence, _overpass_search
 from app.core.config import settings
 from app.services.entity_registry import get_entity_registry
 from app.travel.calculations import calculate_travel
@@ -95,11 +96,39 @@ def _temple_id_for(anchor: str) -> str | None:
     return entity_id if entity_id else None
 
 
+# question keywords -> LIVE OpenStreetMap kind (RAG dataset + realtime)
+_NEARBY_KIND_KEYWORDS: list[tuple[tuple[str, ...], str]] = [
+    (("hospital", "clinic", "emergency", "ambulance", "medical", "doctor",
+      "unwell", "sick", "fever"), "hospital"),
+    (("pharmacy", "chemist", "medicine", "medical shop"), "pharmacy"),
+    (("police", "station house"), "police"),
+    (("atm", "cash machine", "withdraw cash"), "atm"),
+    (("parking", "park my", "park your", "park the"), "parking"),
+    (("petrol", "fuel", "gas station", "petrol pump"), "fuel"),
+    (("bus station", "bus stand"), "bus_station"),
+    (("hotel", "lodging", "rooms near", "stay near"), "hotel"),
+    (("restaurant", "food near", "eat near", "dining", "meals near"),
+     "restaurant"),
+]
+
+
+def _live_kind(question: str) -> str | None:
+    lowered = question.lower()
+    for keywords, kind in _NEARBY_KIND_KEYWORDS:
+        if any(keyword in lowered for keyword in keywords):
+            return kind
+    return None
+
+
 def _run_nearby(subquery: dict) -> dict:
     """travel_nearby: resolve the anchor (endpoints, entity mentions, or the
-    question text - whichever actually names one of OUR temples), then answer
-    'what is near X' from the verified temple dataset (nearby_places). Live
-    Places search stays P4 (honest note only when we have nothing)."""
+    question text - whichever actually names one of OUR temples), then
+    answer 'what is near X' from TWO layers:
+      1. verified temple dataset (nearby_places / nearby_infrastructure) -
+         always, never model memory;
+      2. LIVE OpenStreetMap radius search for the asked kind (hospitals,
+         police, ATMs, parking, petrol, hotels, food) - keyless realtime.
+    Honest note only when both layers come back empty."""
     entities = [
         str(mention)
         for mention in (subquery.get("entities") or [])
@@ -147,28 +176,73 @@ def _run_nearby(subquery: dict) -> dict:
 
     place_anchor = matched_name or anchor_raw
     evidence: list[dict] = []
+    place = None
     if place_anchor.strip():
         place = resolve_place(place_anchor)
         evidence.append(_place_evidence("near", place))
 
-    # Verified dataset first: nearby attractions of an OUR temple always
+    # Verified dataset layer: nearby attractions of an OUR temple always
     # answer from the curated temple JSON (never model memory).
     nearby_evidence: list[dict] = []
     if temple_id:
         nearby_evidence = [
             item
             for item in _temple_agent._dataset_evidence([temple_id])
-            if item.get("field_name") == "nearby_places"
+            if item.get("field_name") in {
+                "nearby_places",
+                "nearby_infrastructure",
+            }
         ]
 
-    if nearby_evidence:
-        evidence.extend(nearby_evidence)
-    else:
+    # LIVE OpenStreetMap layer for the kind the question asks about
+    # (hospitals, police, ATMs, parking, petrol, hotels, food) - realtime,
+    # keyless. Failures degrade to the dataset layer + honest note.
+    live_kind = _live_kind(question or subquery.get("question") or "")
+    osm_error: str | None = None
+    osm_count = 0
+    if live_kind and place is not None:
+        try:
+            pois, osm_error = _overpass_search(
+                live_kind,
+                place.coordinates.latitude,
+                place.coordinates.longitude,
+            )
+        except Exception as exc:  # noqa: BLE001
+            pois, osm_error = [], f"{type(exc).__name__}: {exc}"
+        static_names = [
+            str(item.get("name") or "")
+            for item in nearby_evidence
+        ]
+        osm_items = []
+        for poi in pois:
+            item = _osm_evidence(poi, "osm_search")
+            if item["name"].lower() in {
+                n.lower() for n in static_names if n
+            }:
+                continue
+            osm_items.append(item)
+        evidence.extend(osm_items[: settings.overpass_max_pois])
+        osm_count = len(osm_items)
+        if osm_error:
+            evidence.append(
+                {
+                    "source": "osm_search",
+                    "kind": "note",
+                    "key": "osm_status",
+                    "error": "Live OpenStreetMap search is unavailable right now.",
+                    "hint": None,
+                }
+            )
+
+    evidence.extend(nearby_evidence)
+
+    if not nearby_evidence and not osm_count:
+        # nothing at all: dataset empty AND (no kind asked OR live failed)
         note = {
             "source": "travel",
             "kind": "note",
             "key": "nearby_search_unavailable",
-            "error": "Nearby places search is not available in this deployment yet.",
+            "error": "No nearby information is available for this place right now.",
         }
         note["hint"] = settings.fallback_transit_link
         evidence.append(note)

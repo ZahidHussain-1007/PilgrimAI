@@ -362,6 +362,14 @@ def _select_static(
 _OVERPASS_FILTERS = {
     "hotel": ("tourism", r"^(hotel|guest_house|hostel|lodging|motel)$"),
     "restaurant": ("amenity", r"^(restaurant|cafe|fast_food)$"),
+    # live facility / emergency kinds (keyless OpenStreetMap)
+    "hospital": ("amenity", r"^(hospital|clinic)$"),
+    "pharmacy": ("amenity", r"^pharmacy$"),
+    "police": ("amenity", r"^police$"),
+    "atm": ("amenity", r"^atm$"),
+    "parking": ("amenity", r"^parking$"),
+    "fuel": ("amenity", r"^fuel$"),
+    "bus_station": ("amenity", r"^bus_station$"),
 }
 
 
@@ -384,9 +392,9 @@ def _overpass_search(
     from app.travel.cache import get_fact, set_fact
 
     radius = (
-        settings.overpass_radius_m
-        if kind == "hotel"
-        else min(settings.overpass_radius_m, settings.overpass_food_radius_m)
+        settings.overpass_food_radius_m
+        if kind == "restaurant"
+        else settings.overpass_radius_m
     )
 
     cached = get_fact(

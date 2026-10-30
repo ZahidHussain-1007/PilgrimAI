@@ -59,6 +59,19 @@ _KEYWORD_FIELDS: list[tuple[tuple[str, ...], tuple[str, str]]] = [
      ("architecture", "Architecture")),
     (("legend", "puranam", "mythology", "story of", "why is this"),
      ("sthala_puranam", "Legend")),
+    (("miracle", "miracles", "experience", "experiences", "devotee",
+      "devotees said", "testimonial"),
+     ("miracles_and_devotee_experiences", "Miracles and devotee experiences")),
+    (("healing", "belief", "beliefs", "cure", "wish fulfilled"),
+     ("healing_beliefs", "Healing beliefs")),
+    (("significance", "why important", "pilgrimage merit", "importance"),
+     ("religious_significance", "Religious significance")),
+    (("meditation", "spiritual", "inner peace"),
+     ("spiritual_significance", "Spiritual significance")),
+    (("layout", "inside the temple", "sanctum", "floor plan", "complex plan"),
+     ("temple_layout", "Temple layout")),
+    (("special pooja", "special poojas", "ekadasi pooja"),
+     ("special_poojas", "Special poojas")),
     (("nearby", "near by", "around", "tourist", "attraction",
       "sightsee", "places to see", "places near"),
      ("nearby_places", "Nearby attractions")),
@@ -168,6 +181,25 @@ def _dataset_evidence(
     return evidence[:12]
 
 
+def _dedupe(evidence: list[dict]) -> list[dict]:
+    """Drop identical chunks (duplicate points in the store, RAG + dataset
+    overlap) so the composer sees each fact exactly once."""
+    seen: set[tuple] = set()
+    unique: list[dict] = []
+    for item in evidence:
+        key = (
+            item.get("source"),
+            item.get("field_name"),
+            item.get("section"),
+            str(item.get("text") or item.get("name") or ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique
+
+
 def run(question: str, temple_ids: list[str] | None = None) -> dict:
     """Retrieve top-5 reranked chunks, filtered to resolved temple ids.
     Falls back to the verified dataset files when retrieval is unavailable
@@ -233,11 +265,11 @@ def run(question: str, temple_ids: list[str] | None = None) -> dict:
     if not evidence:
         evidence = _dataset_evidence(temple_ids, question=question)
         if evidence:
-            return {"status": "COMPLETED", "evidence": evidence}
+            return {"status": "COMPLETED", "evidence": _dedupe(evidence)}
         return {
             "status": "ERROR",
             "error": retrieval_error or "no temple data matched the query",
             "evidence": [],
         }
 
-    return {"status": "COMPLETED", "evidence": evidence}
+    return {"status": "COMPLETED", "evidence": _dedupe(evidence)}

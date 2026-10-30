@@ -5,8 +5,10 @@ from __future__ import annotations
 import re
 from typing import Any
 
-# numbers possibly with decimals, not glued to word chars (avoids T0001, q1)
-_NUMBER_RE = re.compile(r"(?<![\w.])-?\d+(?:\.\d+)?(?![\w.])")
+# numbers possibly with decimals, not glued to word chars (avoids T0001, q1).
+# trailing "." must NOT hide sentence-final numbers ("... pincode 500063.")
+# - only a "." that starts a decimal (".\d") blocks the match.
+_NUMBER_RE = re.compile(r"(?<![\w.])-?\d+(?:\.\d+)?(?!\w)(?!\.\d)")
 
 
 def _normalize_number(token: str) -> set[str]:
@@ -39,12 +41,37 @@ def _corpus_numbers(text: str) -> set[str]:
     return found
 
 
+def _evidence_text(results: Any) -> str:
+    """Join every evidence STRING (and numeric leaf) with real newlines.
+
+    json.dumps() escapes newlines to the two characters backslash+n, and the
+    `n` counts as a word character - numbers at line starts (phones, list
+    values) then become invisible to _NUMBER_RE and legitimate replies get
+    flagged as hallucinations. Walking the structure instead keeps true
+    line boundaries."""
+    parts: list[str] = []
+
+    def walk(value: Any) -> None:
+        if isinstance(value, str):
+            parts.append(value)
+        elif isinstance(value, bool):
+            return
+        elif isinstance(value, (int, float)):
+            parts.append(str(value))
+        elif isinstance(value, dict):
+            for item in value.values():
+                walk(item)
+        elif isinstance(value, (list, tuple, set)):
+            for item in value:
+                walk(item)
+
+    walk(results)
+    return "\n".join(parts)
+
+
 def find_missing_numbers(draft: str, results: list[dict]) -> list[str]:
     """Numbers appearing in `draft` that do NOT appear anywhere in `results`."""
-    import json
-
-    evidence_text = json.dumps(results, ensure_ascii=False, default=str)
-    allowed = _corpus_numbers(evidence_text)
+    allowed = _corpus_numbers(_evidence_text(results))
 
     missing: list[str] = []
     for match in _NUMBER_RE.finditer(_strip_thousands(draft)):

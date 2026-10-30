@@ -63,3 +63,29 @@ def test_compose_answer_receives_history_and_history_rule(monkeypatch):
     )
     assert "19. USE THE CONVERSATION HISTORY" in captured["system"]
     assert "internal error identifiers" in captured["system"]
+
+
+def test_phone_numbers_after_newlines_are_grounded():
+    """Regression: json.dumps-escaped newlines used to hide line-start
+    numbers (040-2323-5081) from the allowed set, falsely flagging
+    legitimate replies as hallucinations -> DEGRADED dumps."""
+    from app.pipeline.validator import find_missing_numbers
+
+    results = [
+        {
+            "question": "contact",
+            "evidence": [
+                {
+                    "source": "temple_rag",
+                    "kind": "chunk",
+                    "text": "Phone Numbers:\n040-2323-5081\n040-2324-1067\n"
+                    "Email: birlasc@gmail.com\n"
+                    "Address: Hill Fort Road ... 500063, India",
+                }
+            ],
+        }
+    ]
+    draft = "Phone: 040-2323-5081 and 040-2324-1067, pincode 500063."
+    assert find_missing_numbers(draft, results) == []
+    # a genuinely missing number is still caught
+    assert find_missing_numbers("Call 040-2323-5099.", results) == ["5099"]

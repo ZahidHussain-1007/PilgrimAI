@@ -614,16 +614,48 @@ def _rerank_results(
     ]
 
 
+def _point_id(document: Document) -> str:
+    """Deterministic point id: re-ingesting the same content upserts the
+    same point instead of creating duplicates."""
+    import hashlib
+
+    meta = document.metadata or {}
+    basis = "|".join(
+        [
+            str(meta.get("temple_id") or ""),
+            str(meta.get("field_name") or ""),
+            str(meta.get("section") or ""),
+            str(meta.get("chunk_index") or ""),
+            document.page_content,
+        ]
+    )
+    return hashlib.sha1(basis.encode("utf-8")).hexdigest()
+
+
 def ingest_documents(
     documents: list[Document],
 ) -> int:
+    """Full-ingest semantics: RECREATE the collection first so re-runs
+    never duplicate points (a double-run previously left two copies of
+    every chunk in the store), then upsert with deterministic ids."""
     if not documents:
         return 0
+
+    client = get_qdrant_client()
+    ensure_collection()
+    if client.collection_exists(COLLECTION_NAME):
+        client.delete_collection(COLLECTION_NAME)
+    ensure_collection()
+
+    # rebuild the cached vector store wrapper after recreation
+    global _vector_store
+    _vector_store = None
 
     vector_store = get_vector_store()
 
     vector_store.add_documents(
         documents,
+        ids=[_point_id(document) for document in documents],
     )
 
     return len(documents)

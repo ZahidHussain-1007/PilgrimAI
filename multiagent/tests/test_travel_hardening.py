@@ -285,3 +285,97 @@ def test_travel_nearby_gets_registry_resolution():
     from app.agents.registry import REGISTRY_RESOLVED_CATEGORIES
 
     assert "travel_nearby" in REGISTRY_RESOLVED_CATEGORIES
+
+
+# --- v10: travel_nearby LIVE OpenStreetMap layer (RAG + realtime) -------
+
+def test_live_kind_maps_emergency_and_facility_words():
+    from app.agents.travel import _live_kind
+
+    assert _live_kind("Which hospitals are near Birla Mandir?") == "hospital"
+    assert _live_kind("emergency clinic near the temple") == "hospital"
+    assert _live_kind("police station near birla mandir") == "police"
+    assert _live_kind("atm near birla mandir") == "atm"
+    assert _live_kind("petrol pump near birla mandir") == "fuel"
+    assert _live_kind("parking near birla mandir") == "parking"
+    assert _live_kind("best tourist places near by birla mandir") is None
+
+
+def test_overpass_filters_cover_emergency_kinds():
+    from app.agents.accommodation import _OVERPASS_FILTERS
+
+    for kind in ["hospital", "police", "atm", "parking", "fuel", "pharmacy"]:
+        assert kind in _OVERPASS_FILTERS
+
+
+def test_run_nearby_uses_live_osm_layer(monkeypatch):
+    from app.agents import travel as travel_module
+
+    poi = {
+        "name": "Nizam's Institute of Medical Sciences",
+        "category": "hospital",
+        "cuisine": None,
+        "phone": None,
+        "website": None,
+        "address": None,
+        "latitude": 17.4239,
+        "longitude": 78.4489,
+        "distance_km": 3.1,
+    }
+    monkeypatch.setattr(
+        travel_module,
+        "_overpass_search",
+        lambda kind, lat, lng: ([poi], None),
+    )
+
+    result = travel_module.run(
+        {
+            "category": "travel_nearby",
+            "question": "Which hospitals are near Birla Mandir, Hyderabad?",
+            "origin": None,
+            "destination": "Birla Mandir",
+            "entities": ["Birla Mandir"],
+            "temple_ids": None,
+        }
+    )
+
+    assert result["status"] == "COMPLETED"
+    osm = [
+        e for e in result["evidence"]
+        if e.get("source") == "osm_search" and e.get("kind") == "poi"
+    ]
+    assert osm and osm[0]["name"].startswith("Nizam")
+    # dataset layer still present alongside the live layer
+    assert any(
+        e.get("field_name") in {"nearby_places", "nearby_infrastructure"}
+        for e in result["evidence"]
+    )
+
+
+def test_run_nearby_live_failure_degrades_to_dataset(monkeypatch):
+    from app.agents import travel as travel_module
+
+    def boom(kind, lat, lng):
+        raise RuntimeError("overpass down")
+
+    monkeypatch.setattr(travel_module, "_overpass_search", boom)
+
+    result = travel_module.run(
+        {
+            "category": "travel_nearby",
+            "question": "hospitals near birla mandir",
+            "origin": None,
+            "destination": "Birla Mandir",
+            "entities": ["Birla Mandir"],
+            "temple_ids": None,
+        }
+    )
+
+    assert result["status"] == "COMPLETED"
+    assert any(
+        e.get("key") == "osm_status" for e in result["evidence"]
+    )
+    assert any(
+        e.get("field_name") in {"nearby_places", "nearby_infrastructure"}
+        for e in result["evidence"]
+    )
