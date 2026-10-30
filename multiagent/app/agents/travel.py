@@ -3,7 +3,9 @@ evidence (facts + calculations + notes). Google first when a key is configured,
 then OSRM, then Haversine (approximate)."""
 from __future__ import annotations
 
+from app.agents import temple as _temple_agent
 from app.core.config import settings
+from app.services.entity_registry import get_entity_registry
 from app.travel.calculations import calculate_travel
 from app.travel.providers.route_chain import route_with_fallbacks
 from app.travel.resolver import (
@@ -75,11 +77,62 @@ def _route_evidence(route_result) -> list[dict]:
     return items
 
 
+def _temple_id_for(anchor: str) -> str | None:
+    """Registry-first: is the anchor one of OUR temples? entity_id for
+    temples is the dataset file id (T0009, ...)."""
+    if not anchor.strip():
+        return None
+    try:
+        result = get_entity_registry().resolve(
+            mention=anchor,
+            entity_type="temple",
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    if result.get("status") != "RESOLVED":
+        return None
+    entity_id = str(result.get("entity_id") or "")
+    return entity_id if entity_id else None
+
+
 def _run_nearby(subquery: dict) -> dict:
-    """travel_nearby v1: resolve the anchor place; the Places-based search
-    activates with GOOGLE_MAPS_API_KEY (P4). Honest note until then."""
-    anchor_raw = subquery.get("destination") or subquery.get("origin")
-    if not anchor_raw or not str(anchor_raw).strip():
+    """travel_nearby: resolve the anchor (endpoints, entity mentions, or the
+    question text - whichever actually names one of OUR temples), then answer
+    'what is near X' from the verified temple dataset (nearby_places). Live
+    Places search stays P4 (honest note only when we have nothing)."""
+    entities = [
+        str(mention)
+        for mention in (subquery.get("entities") or [])
+        if str(mention).strip()
+    ]
+    destination = str(subquery.get("destination") or "")
+    origin = str(subquery.get("origin") or "")
+    question = str(subquery.get("question") or "")
+    anchor_raw = destination or origin or (entities[0] if entities else "")
+
+    # Find OUR temple among every candidate (context ids first, then each
+    # endpoint, each mention, and finally the full question - containment
+    # matching inside the question still hits "Birla Mandir").
+    temple_id: str | None = None
+    matched_name: str | None = None
+    ctx_ids = [
+        str(item)
+        for item in (subquery.get("temple_ids") or [])
+        if str(item).strip()
+    ]
+    if ctx_ids:
+        temple_id = ctx_ids[0]
+    else:
+        for candidate in [destination, origin, *entities, question]:
+            found = _temple_id_for(candidate)
+            if found:
+                temple_id = found
+                if not anchor_raw:
+                    anchor_raw = candidate
+                matched_name = candidate
+                break
+
+    if not anchor_raw.strip() and not temple_id:
         return {
             "status": "ERROR",
             "error": "place_missing",
@@ -92,18 +145,37 @@ def _run_nearby(subquery: dict) -> dict:
             ],
         }
 
-    place = resolve_place(anchor_raw)
-    note = {
-        "source": "travel",
-        "kind": "note",
-        "key": "nearby_search_unavailable",
-        "error": "Nearby places search is not available in this deployment yet.",
-    }
-    note["hint"] = settings.fallback_transit_link
+    place_anchor = matched_name or anchor_raw
+    evidence: list[dict] = []
+    if place_anchor.strip():
+        place = resolve_place(place_anchor)
+        evidence.append(_place_evidence("near", place))
+
+    # Verified dataset first: nearby attractions of an OUR temple always
+    # answer from the curated temple JSON (never model memory).
+    nearby_evidence: list[dict] = []
+    if temple_id:
+        nearby_evidence = [
+            item
+            for item in _temple_agent._dataset_evidence([temple_id])
+            if item.get("field_name") == "nearby_places"
+        ]
+
+    if nearby_evidence:
+        evidence.extend(nearby_evidence)
+    else:
+        note = {
+            "source": "travel",
+            "kind": "note",
+            "key": "nearby_search_unavailable",
+            "error": "Nearby places search is not available in this deployment yet.",
+        }
+        note["hint"] = settings.fallback_transit_link
+        evidence.append(note)
 
     return {
         "status": "COMPLETED",
-        "evidence": [_place_evidence("near", place), note],
+        "evidence": evidence,
     }
 
 

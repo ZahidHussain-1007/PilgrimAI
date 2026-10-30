@@ -60,10 +60,21 @@ For every user message you do ALL of these, in one pass:
      exactly like travel_route when the trip endpoints are named; keep
      days/persons/stay details in `question` (the budget engine reads them).
    - travel_nearby: things near a place that are NOT stay/food/budget questions
-     (nearby temples, attractions, parking, things to do around X).
+     (nearby temples, attractions, parking, things to do around X). ALWAYS
+     fill `destination` with the anchor place name - the place things are
+     near - even when the phrasing gives it only as an entity mention
+     ("best tourist places near by birla mandir" -> destination="Birla
+     Mandir"); never leave it null when a place is named.
    - smalltalk: chitchat, jokes, thanks, or anything outside the capabilities
      above -> fill direct_reply politely and briefly, in the user's language,
      saying what you CAN help with. Never invent facts.
+     IMPORTANT: a bare follow-up word in a conversation about a specific
+     place (e.g. "contact", "history", "reviews", "timings", "address"
+     after earlier turns about Birla Mandir) is a QUESTION ABOUT THAT
+     PLACE - classify it as temple_info (entity = that place, question =
+     the explicit question, e.g. "What are the contact details of Birla
+     Mandir?"), NEVER as smalltalk. "history" means the place's history,
+     never chat-log history.
    - emergency: clearly urgent safety requests.
    - multi: when the message contains MORE THAN ONE distinct task.
      In that case classify subqueries normally (each gets its real category
@@ -151,6 +162,18 @@ Message: "tell me about yadadri and where to stay there"
 
 Message: "tell me about yadadri and how to reach there from hyderabad"
 {"language":"en","category":"multi","rewritten_query":"Tell me about Yadadri Temple and how to reach it from Hyderabad.","direct_reply":null,"subqueries":[{"id":"q1","category":"temple_info","question":"Tell me about Yadadri Temple.","entities":[{"mention":"Yadadri","entity_type":"temple"}],"origin":null,"destination":null,"mode":null,"depends_on":[]},{"id":"q2","category":"travel_route","question":"How do I reach Yadadri Temple from Hyderabad?","entities":[],"origin":"Hyderabad","destination":"Yadadri","mode":"driving","depends_on":[]}]}
+
+Message: "best tourist places near by birla mandir"  (history: "i want to go to birla mandir")
+{"language":"en","category":"travel_nearby","rewritten_query":"What are the best tourist places near Birla Mandir, Hyderabad?","direct_reply":null,"subqueries":[{"id":"q1","category":"travel_nearby","question":"What are the best tourist places near Birla Mandir, Hyderabad?","entities":[{"mention":"Birla Mandir","entity_type":"temple"}],"origin":null,"destination":"Birla Mandir","mode":"driving","depends_on":[]}]}
+
+Message: "contact"  (recent_history: tourist places near Birla Mandir, Hyderabad)
+{"language":"en","category":"temple_info","rewritten_query":"What are the contact details of Birla Mandir, Hyderabad?","direct_reply":null,"subqueries":[{"id":"q1","category":"temple_info","question":"What are the contact details (phone, email, address, website) of Birla Mandir, Hyderabad?","entities":[{"mention":"Birla Mandir","entity_type":"temple"}],"origin":null,"destination":null,"mode":null,"depends_on":[]}]}
+
+Message: "history"  (recent_history: contacts of birla mandir)
+{"language":"en","category":"temple_info","rewritten_query":"What is the history of Birla Mandir, Hyderabad?","direct_reply":null,"subqueries":[{"id":"q1","category":"temple_info","question":"What is the history of Birla Mandir, Hyderabad?","entities":[{"mention":"Birla Mandir","entity_type":"temple"}],"origin":null,"destination":null,"mode":null,"depends_on":[]}]}
+
+Message: "reviews of birla mandir"
+{"language":"en","category":"temple_info","rewritten_query":"What do reviews say about Birla Mandir, Hyderabad?","direct_reply":null,"subqueries":[{"id":"q1","category":"temple_info","question":"What are the reviews and ratings of Birla Mandir, Hyderabad?","entities":[{"mention":"Birla Mandir","entity_type":"temple"}],"origin":null,"destination":null,"mode":null,"depends_on":[]}]}
 
 Message: "what can you do"
 {"language":"en","category":"help_meta","rewritten_query":"What can you do?","direct_reply":"I can provide verified temple details, help with travel routes, distances and nearby places, and safety guidance.","subqueries":[]}

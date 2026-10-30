@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -14,7 +15,10 @@ from qdrant_client.models import (
     MatchAny,
     VectorParams,
 )
-from sentence_transformers import SentenceTransformer
+try:  # preferred backend: sentence-transformers (torch)
+    from sentence_transformers import SentenceTransformer
+except Exception:  # pragma: no cover - e.g. AppLocker blocks torch DLLs
+    SentenceTransformer = None
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -25,7 +29,9 @@ COLLECTION_NAME = "temple_documents_bge_m3"
 
 EMBEDDING_MODEL = "BAAI/bge-m3"
 
-EMBEDDING_DIMENSION = 1024
+EMBEDDING_DIMENSION = int(
+    os.environ.get("EMBEDDING_DIMENSION", "1024")
+)
 
 BATCH_SIZE = 32
 
@@ -50,6 +56,18 @@ CONTENT_TYPE_PRIORITY = {
     "travel_tips": 0.65,
     "nearby_places": 0.55,
     "nearby_infrastructure": 0.55,
+    "accommodation": 0.80,
+    "accessibility": 0.65,
+    "healing_beliefs": 0.60,
+    "miracles_and_devotee_experiences": 0.60,
+    "deity": 0.85,
+    "darshan_timings": 0.95,
+    "timing_conflict_note": 0.95,
+    "sevas": 0.85,
+    "darshan_and_tickets": 0.90,
+    "contact": 0.85,
+    "facilities": 0.60,
+    "reviews": 0.70,
     "audio": 0.85,
 }
 
@@ -144,39 +162,98 @@ FACILITY_QUERY_TERMS = {
 
 
 class BGEEmbeddings(Embeddings):
+    """1024-dim embeddings for the temple collection.
+
+    Backend order:
+      1. sentence-transformers + BAAI/bge-m3 (torch machines, matches the
+         architecture doc / paper setup);
+      2. fastembed (ONNX, NO torch) + intfloat/multilingual-e5-large - same
+         1024 dimensions, multilingual (en/te/hi) - so ingestion and search
+         also work where torch is blocked by Application Control policies.
+
+    The two backends never run together: this singleton picks the first one
+    that is importable/usable on the machine.
+    """
+
+    FASTEMBED_MODEL = "intfloat/multilingual-e5-large"
+
     def __init__(self) -> None:
-        self.model = SentenceTransformer(
-            EMBEDDING_MODEL,
-            device="cpu",
+        self._st = None
+        self._fastembed = None
+
+        if SentenceTransformer is not None:
+            try:
+                self._st = SentenceTransformer(
+                    EMBEDDING_MODEL,
+                    device="cpu",
+                )
+                self._st.max_seq_length = 512
+                return
+            except Exception:  # noqa: BLE001
+                self._st = None
+
+        from fastembed import TextEmbedding
+
+        self._fastembed = TextEmbedding(
+            model_name=os.environ.get(
+                "FASTEMBED_EMBEDDING_MODEL", self.FASTEMBED_MODEL
+            ),
+            # keep the ~2.2 GB ONNX model outside the repo and outside
+            # tmpfs (too small) - survives repo cleans, never git-added
+            cache_dir=str(Path.home() / ".cache" / "fastembed"),
+            # ORT thread count: default (cpu_count) allocates big arenas
+            # that can OOM small machines; override with FASTEMBED_THREADS
+            threads=max(
+                1,
+                int(
+                    __import__("os").environ.get(
+                        "FASTEMBED_THREADS", "2"
+                    )
+                ),
+            ),
         )
 
-        self.model.max_seq_length = 512
+    @property
+    def backend(self) -> str:
+        if self._st is not None:
+            return "sentence-transformers/bge-m3"
+        return f"fastembed/{self.FASTEMBED_MODEL}"
+
+    def _encode(
+        self,
+        texts: list[str],
+        *,
+        prefix: str = "",
+    ) -> list[list[float]]:
+        if self._st is not None:
+            embeddings = self._st.encode(
+                texts,
+                batch_size=BATCH_SIZE,
+                show_progress_bar=True,
+                normalize_embeddings=True,
+                convert_to_numpy=True,
+            )
+            return embeddings.tolist()
+
+        # multilingual-e5 expects task prefixes for best quality
+        return [
+            vector.tolist()
+            for vector in self._fastembed.embed(
+                [prefix + text for text in texts]
+            )
+        ]
 
     def embed_documents(
         self,
         texts: list[str],
     ) -> list[list[float]]:
-        embeddings = self.model.encode(
-            texts,
-            batch_size=BATCH_SIZE,
-            show_progress_bar=True,
-            normalize_embeddings=True,
-            convert_to_numpy=True,
-        )
-
-        return embeddings.tolist()
+        return self._encode(texts, prefix="passage: ")
 
     def embed_query(
         self,
         text: str,
     ) -> list[float]:
-        embedding = self.model.encode(
-            text,
-            normalize_embeddings=True,
-            convert_to_numpy=True,
-        )
-
-        return embedding.tolist()
+        return self._encode([text], prefix="query: ")[0]
 
 
 _embeddings: BGEEmbeddings | None = None

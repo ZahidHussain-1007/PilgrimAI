@@ -14,9 +14,13 @@ TEMPLES_DIR = PROJECT_ROOT / "data" / "temples"
 
 
 # Narrative fields that should become retrievable RAG documents.
+# EVERY visitor-facing section of the temple JSON must live here so the
+# RAG pipeline can retrieve it (contact, timings, sevas, reviews were
+# previously unreachable - found in the full-pipeline audit).
 NARRATIVE_FIELDS = {
     "overview",
     "summary",
+    "deity",
     "sthala_puranam",
     "religious_significance",
     "spiritual_significance",
@@ -27,6 +31,13 @@ NARRATIVE_FIELDS = {
     "rituals",
     "special_poojas",
     "festivals",
+    "darshan_timings",
+    "timing_conflict_note",
+    "sevas",
+    "darshan_and_tickets",
+    "facilities",
+    "contact",
+    "reviews",
     "travel",
     "travel_tips",
     "best_time_to_visit",
@@ -41,16 +52,10 @@ NARRATIVE_FIELDS = {
 }
 
 
-# Fields that contain structured operational facts.
-# These stay in the canonical registry rather than becoming ordinary
-# narrative RAG content.
+# Fields that stay OUT of narrative RAG (pure metadata/IDs/links).
 STRUCTURED_ONLY_FIELDS = {
     "temple_id",
     "location",
-    "darshan_timings",
-    "sevas",
-    "darshan_and_tickets",
-    "contact",
     "images",
     "wikidata",
     "knowledge_graph",

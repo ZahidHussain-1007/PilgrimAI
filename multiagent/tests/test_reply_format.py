@@ -30,3 +30,36 @@ def test_unit_spacing_never_touches_digits_or_urls():
 def test_range_glue_still_works_and_spacing_chains():
     repaired = _repair_unit_spacing(_repair_range_glue("₹700₹4500 for 2nights"))
     assert repaired == "₹700–₹4500 for 2 nights"
+
+
+def test_compose_answer_receives_history_and_history_rule(monkeypatch):
+    """v8: composer gets the conversation history (so it never re-asks an
+    established city/place) and the rule enforcing it."""
+    from app.pipeline import compose as compose_module
+
+    captured: dict = {}
+
+    def fake_complete_json(*, system, payload, schema_name, schema):
+        captured["system"] = system
+        captured["payload"] = payload
+        return {"reply": "ok", "follow_ups": ["a", "b", "c"]}
+
+    monkeypatch.setattr(compose_module, "complete_json", fake_complete_json)
+
+    compose_module.answer(
+        question="Best tourist places near Birla Mandir",
+        language="en",
+        results=[],
+        history=[
+            {
+                "user": "i want to go to birla mandir",
+                "reply": "Birla Mandir Hyderabad ...",
+            }
+        ],
+    )
+
+    assert captured["payload"]["history"][0]["user"] == (
+        "i want to go to birla mandir"
+    )
+    assert "19. USE THE CONVERSATION HISTORY" in captured["system"]
+    assert "internal error identifiers" in captured["system"]

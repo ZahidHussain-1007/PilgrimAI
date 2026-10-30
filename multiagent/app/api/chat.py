@@ -23,6 +23,8 @@ from app.services.session import get_session, save_session
 
 router = APIRouter()
 
+logger = logging.getLogger(__name__)
+
 MAX_FEEDBACK_ROUNDS = 2
 
 DIRECT_STATUS = "DIRECT"
@@ -230,6 +232,8 @@ def chat(request: ChatRequest) -> dict:
 
         missing = find_missing_numbers(reply, results)
         rounds = 0
+        if missing:
+            logger.warning("number validation flagged: %s", missing)
         while missing and rounds < MAX_FEEDBACK_ROUNDS:
             rounds += 1
             reply, follow_ups = _composed(
@@ -242,6 +246,12 @@ def chat(request: ChatRequest) -> dict:
                 )
             )
             missing = find_missing_numbers(reply, results)
+            if missing:
+                logger.warning(
+                    "number validation after round %d flagged: %s",
+                    rounds,
+                    missing,
+                )
 
         status = "COMPLETED"
         if missing:

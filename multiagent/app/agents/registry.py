@@ -37,6 +37,11 @@ def _run_travel(subquery: Any, context: dict) -> dict:
             "origin": subquery.origin,
             "destination": subquery.destination,
             "mode": subquery.mode or "driving",
+            # travel_nearby needs the anchor mention(s) when endpoints are
+            # left null ("nearby birla mandir"), plus our temple ids for the
+            # verified dataset lookup.
+            "entities": _mentions(subquery),
+            "temple_ids": context.get("temple_ids") or None,
         }
     )
 
@@ -90,6 +95,7 @@ AGENT_REGISTRY: dict[str, AgentFn] = {
 # Categories that need registry entity-id resolution before running.
 REGISTRY_RESOLVED_CATEGORIES = {
     "temple_info",
+    "travel_nearby",
     "accommodation",
     "restaurant",
     "budget",

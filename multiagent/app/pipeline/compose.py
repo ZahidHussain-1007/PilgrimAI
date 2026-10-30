@@ -41,7 +41,9 @@ Hard rules:
    never a range collapsed to one number).
 3. If a subquery has empty evidence or contains an error/note, honestly tell the
    user that this information is not available right now (and include any hint
-   from that note, e.g. an alternative link the evidence provides).
+   from that note, e.g. an alternative link the evidence provides). NEVER quote
+   raw internal error identifiers (like "place_missing" or "error: ...") in the
+   reply - write plain language only.
 4. Address each subquery in order. Use short paragraphs or bullets. Lead with
    the direct answer, then useful context.
 5. Write in the user's `language` (match it exactly, including Hinglish/Telugu).
@@ -234,7 +236,7 @@ def _payload(
                 "category": result.get("category"),
                 "question": result.get("question"),
                 "status": result.get("status"),
-                "evidence": _truncate(result.get("evidence", []), 1400),
+                "evidence": _truncate(result.get("evidence", []), 2200),
                 "error": result.get("error"),
             }
             for result in results
