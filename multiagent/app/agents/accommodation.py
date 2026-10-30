@@ -372,6 +372,10 @@ _OVERPASS_FILTERS = {
     "bus_station": ("amenity", r"^bus_station$"),
     "fire_station": ("amenity", r"^fire_station$"),
     "ambulance": ("emergency", r"^ambulance_station$"),
+    "attraction": (
+        "tourism",
+        r"^(attraction|museum|viewpoint|artwork|gallery|zoo|theme_park)$",
+    ),
 }
 
 

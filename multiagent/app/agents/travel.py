@@ -114,6 +114,9 @@ _NEARBY_KIND_KEYWORDS: list[tuple[tuple[str, ...], str]] = [
     (("hotel", "lodging", "rooms near", "stay near"), "hotel"),
     (("restaurant", "food near", "eat near", "dining", "meals near"),
      "restaurant"),
+    (("tourist", "attraction", "attractions", "sightseeing",
+      "things to see", "places to see", "visit nearby", "what to see"),
+     "attraction"),
 ]
 
 # verified per-temple emergency dataset (data/emergency/T*.json, 23 files)

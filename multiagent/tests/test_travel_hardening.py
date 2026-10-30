@@ -298,7 +298,11 @@ def test_live_kind_maps_emergency_and_facility_words():
     assert _live_kind("atm near birla mandir") == "atm"
     assert _live_kind("petrol pump near birla mandir") == "fuel"
     assert _live_kind("parking near birla mandir") == "parking"
-    assert _live_kind("best tourist places near by birla mandir") is None
+    # attraction words now map to the live OSM attraction kind
+    assert _live_kind("best tourist places near by birla mandir") == (
+        "attraction"
+    )
+    assert _live_kind("something vague about the temple") is None
 
 
 def test_overpass_filters_cover_emergency_kinds():
@@ -379,3 +383,21 @@ def test_run_nearby_live_failure_degrades_to_dataset(monkeypatch):
         e.get("field_name") in {"nearby_places", "nearby_infrastructure"}
         for e in result["evidence"]
     )
+
+
+def test_attraction_kind_mapping_and_filter():
+    from app.agents.accommodation import _OVERPASS_FILTERS
+    from app.agents.travel import _live_kind
+
+    assert _live_kind("best tourist places near by birla mandir") == (
+        "attraction"
+    )
+    assert _live_kind("things to see around charminar") == "attraction"
+    # facility words still win over the attraction words
+    assert _live_kind("tourist info desk hospital near birla mandir") == (
+        "hospital"
+    )
+    assert "attraction" in _OVERPASS_FILTERS
+    tag_key, tag_value = _OVERPASS_FILTERS["attraction"]
+    assert tag_key == "tourism"
+    assert "museum" in tag_value
