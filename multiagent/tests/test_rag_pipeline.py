@@ -95,7 +95,7 @@ def test_evidence_dedupe_drops_identical_chunks(monkeypatch):
     assert texts.count(("audio", dup["text"])) == 1
 
 
-def test_ingest_is_idempotent_with_deterministic_ids(monkeypatch):
+def test_ingest_is_idempotent_with_deterministic_ids(monkeypatch, tmp_path):
     from langchain_core.documents import Document
 
     import app.services.temple_vector_store as store
@@ -132,3 +132,29 @@ def test_ingest_is_idempotent_with_deterministic_ids(monkeypatch):
     assert deleted["called"] is True
     assert added["ids"] is not None
     assert added["ids"][0] == added["ids"][1]  # same content -> same id
+
+    # ids must be accepted by the REAL Qdrant point validator (a mocked
+    # add_documents previously hid a sha1-hex id Qdrant rejects as
+    # "not a valid UUID" on Windows ingest)
+    import uuid as uuid_mod
+
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import Distance, PointStruct, VectorParams
+
+    for point_id in added["ids"]:
+        uuid_mod.UUID(str(point_id))  # raises if not a UUID
+
+    client = QdrantClient(path=str(tmp_path / "qdrant-id-check"))
+    client.create_collection(
+        "id_check",
+        VectorParams(size=4, distance=Distance.COSINE),
+    )
+    client.upsert(
+        "id_check",
+        [
+            PointStruct(id=str(pid), vector=[0.0, 0.0, 0.0, 1.0])
+            for pid in added["ids"]
+        ],
+    )
+    # same content twice -> ONE point (idempotent upsert collapses it)
+    assert client.count("id_check").count == 1

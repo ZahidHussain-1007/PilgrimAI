@@ -616,8 +616,12 @@ def _rerank_results(
 
 def _point_id(document: Document) -> str:
     """Deterministic point id: re-ingesting the same content upserts the
-    same point instead of creating duplicates."""
-    import hashlib
+    same point instead of creating duplicates.
+
+    Qdrant accepts only unsigned ints or UUIDs as point ids, so the digest
+    must be a uuid5 (deterministic) - a bare sha1 hex string is rejected
+    by qdrant_client.local with 'Point id ... is not a valid UUID'."""
+    import uuid
 
     meta = document.metadata or {}
     basis = "|".join(
@@ -629,7 +633,7 @@ def _point_id(document: Document) -> str:
             document.page_content,
         ]
     )
-    return hashlib.sha1(basis.encode("utf-8")).hexdigest()
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, basis))
 
 
 def ingest_documents(
