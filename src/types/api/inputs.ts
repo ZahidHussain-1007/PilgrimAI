@@ -33,6 +33,8 @@ export interface CreateItineraryInput {
     label?: string
     activities?: {
       title: string
+      /** stamped by validation from the day index (audit C01/C03) */
+      dayNumber?: number
       location?: string
       kind?: string
       startTime?: string

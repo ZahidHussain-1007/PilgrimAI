@@ -125,6 +125,19 @@ def _select_fallback_fields(question: str | None) -> list[tuple[str, str]]:
     return selected[:10]
 
 
+def _first_source_url(sources: object) -> str | None:
+    """First usable URL from the temple record's sources list (R01)."""
+    if isinstance(sources, list):
+        for item in sources:
+            if isinstance(item, dict):
+                url = str(item.get("url") or "").strip()
+                if url.startswith("http"):
+                    return url
+            elif isinstance(item, str) and item.strip().startswith("http"):
+                return item.strip()
+    return None
+
+
 def _document_to_evidence(document: Any) -> dict:
     metadata = dict(document.metadata)
     return {
@@ -138,6 +151,9 @@ def _document_to_evidence(document: Any) -> dict:
         "section": metadata.get("section"),
         "chunk_index": metadata.get("chunk_index"),
         "source_tier": metadata.get("source_tier"),
+        # R01: currency of the claim travels WITH the evidence
+        "last_verified": metadata.get("last_verified"),
+        "source_url": _first_source_url(metadata.get("sources")),
     }
 
 

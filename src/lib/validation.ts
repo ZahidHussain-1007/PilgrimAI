@@ -1,4 +1,5 @@
 import { BadRequestError } from "./api/errors"
+import type { CreateItineraryInput } from "@/types/api/inputs"
 
 export function validateRequiredString(
   value: unknown,
@@ -146,9 +147,51 @@ export function validateCreateItineraryInput(data: unknown) {
   return {
     tripId: validateOptionalString(raw.tripId, "Trip ID", 100),
     title: validateRequiredString(raw.title, "Itinerary title", 1, 200),
+    // audit C01: days MUST survive validation — dropping them here meant
+    // every create call silently produced an empty itinerary.
+    days: validateItineraryDays(raw.days),
     estimatedCost: validateOptionalNumber(raw.estimatedCost, "Estimated cost", 0, 100000000),
     currency: validateOptionalString(raw.currency, "Currency", 10) || "INR",
   }
+}
+
+function validateItineraryDays(value: unknown): CreateItineraryInput["days"] {
+  if (value === undefined || value === null) return undefined
+  if (!Array.isArray(value)) {
+    throw new BadRequestError("Itinerary days must be an array")
+  }
+  if (value.length > 60) {
+    throw new BadRequestError("Itinerary days cannot exceed 60")
+  }
+  return value.map((rawDay, index) => {
+    if (typeof rawDay !== "object" || rawDay === null) {
+      throw new BadRequestError(`Day ${index + 1} must be an object`)
+    }
+    const day = rawDay as Record<string, unknown>
+    const rawActivities = day.activities
+    const activities =
+      rawActivities === undefined || rawActivities === null
+        ? []
+        : (Array.isArray(rawActivities) ? rawActivities : []).map(
+            (rawActivity, activityIndex) => {
+              if (typeof rawActivity !== "object" || rawActivity === null) {
+                throw new BadRequestError(
+                  `Day ${index + 1} activity ${activityIndex + 1} must be an object`,
+                )
+              }
+              const activity = rawActivity as Record<string, unknown>
+              const validated = validateCreateItineraryItemInput(activity)
+              return {
+                ...validated,
+                dayNumber: index + 1,
+              }
+            },
+          )
+    return {
+      label: validateOptionalString(day.label, "Day label", 100) || `Day ${index + 1}`,
+      activities,
+    }
+  })
 }
 
 export function validateCreateItineraryItemInput(data: unknown) {
@@ -158,6 +201,10 @@ export function validateCreateItineraryItemInput(data: unknown) {
   const raw = data as Record<string, unknown>
   return {
     dayLabel: validateOptionalString(raw.dayLabel, "Day label", 100) || "Day 1",
+    // audit C02: keep the caller's dayNumber and location — dropping them
+    // forced every activity onto day 1 with no location.
+    dayNumber: validateOptionalNumber(raw.dayNumber, "Day number", 1, 60),
+    location: validateOptionalString(raw.location, "Location", 200),
     title: validateRequiredString(raw.title, "Activity title", 1, 200),
     kind: validateOptionalString(raw.kind, "Activity kind", 50) || "darshan",
     startTime: validateOptionalString(raw.startTime, "Start time", 20),

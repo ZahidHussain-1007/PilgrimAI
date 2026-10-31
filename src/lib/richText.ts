@@ -15,7 +15,9 @@ export type RichBlock =
   | { kind: "list"; items: InlineToken[][] }
 
 /** bold spans and bare URLs in one pass */
-const INLINE_RE = /\*\*([^*]+)\*\*|(https?:\/\/[^\s<>"']+)/g
+// audit C24: the URL class must not exclude `'` (e.g. Wikipedia's
+// `Vemulawada_Raja_Rajeshwara_Temple`), which broke link rendering.
+const INLINE_RE = /\*\*([^*]+)\*\*|(https?:\/\/[^\s<>"]+)/g
 const BULLET_RE = /^\s*[-•*]\s+(.*)$/
 const TRAILING_PUNCT = /[.,;:!?)\]}'’”]+$/
 

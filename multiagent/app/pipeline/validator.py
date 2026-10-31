@@ -51,6 +51,21 @@ def _evidence_text(results: Any) -> str:
     line boundaries."""
     parts: list[str] = []
 
+    # keys whose text must NOT ground the reply (audit C17): the echoed
+    # customer question / prompt draft - their digits are the user's own
+    # words, not evidence.
+    _NON_EVIDENCE_KEYS = {
+        "question",
+        "rewritten_query",
+        "query",
+        "user_query",
+        "prompt",
+        "system_prompt",
+        "user_message",
+        "draft",
+        "reply_draft",
+    }
+
     def walk(value: Any) -> None:
         if isinstance(value, str):
             parts.append(value)
@@ -60,6 +75,8 @@ def _evidence_text(results: Any) -> str:
             parts.append(str(value))
         elif isinstance(value, dict):
             for key, item in value.items():
+                if str(key).lower() in _NON_EVIDENCE_KEYS:
+                    continue
                 # keys carry data too ("open_24x7": true, "distance_km")
                 parts.append(str(key))
                 walk(item)
@@ -133,6 +150,29 @@ def render_structured(results: list[dict]) -> str:
                     f"provider status: {item.get('status')}"
                     + (f", selected: {item.get('selected')}" if item.get("selected") else "")
                 )
+            elif kind in {"hotel", "restaurant", "poi"}:
+                # structured stays (audit C16): a bare "text" dump hides
+                # every other field - print name + the useful keys.
+                name = item.get("name")
+                lines.append(f"{kind}: {name}" if name else f"{kind}: (unnamed)")
+                for key in (
+                    "rating",
+                    "reviews",
+                    "price",
+                    "price_range",
+                    "price_category",
+                    "average_cost_for_two",
+                    "phone",
+                    "address",
+                    "distance_km",
+                    "maps_link",
+                    "google_maps_url",
+                    "note",
+                    "error",
+                ):
+                    val = item.get(key)
+                    if val not in (None, "", []):
+                        lines.append(f"  {key}: {val}")
             elif kind == "budget_item":
                 component = item.get("component") or "cost"
                 scope = item.get("scope") or ""

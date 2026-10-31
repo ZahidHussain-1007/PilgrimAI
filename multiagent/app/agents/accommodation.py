@@ -292,6 +292,75 @@ def _load_restaurants() -> list[dict[str, Any]]:
 # static selection: temple_ids (registry-resolved) -> place tokens -> names
 # ---------------------------------------------------------------------------
 
+_MAX_PRICE_RE = re.compile(
+    r"(?:under|below|within|upto|up to|less than|max(?:imum)?(?: of)?"
+    r"|budget(?: of)?)\s*(?:₹|rs\.?\s*|inr\s*)?(\d[\d,]*(?:\.\d+)?)"
+    r"\s*(k|thousand)?",
+    re.IGNORECASE,
+)
+_WITHIN_KM_RE = re.compile(
+    r"\bwithin\s+(\d+(?:\.\d+)?)\s*km\b", re.IGNORECASE
+)
+
+
+def _max_price_rupees(question: str) -> float | None:
+    match = _MAX_PRICE_RE.search(question or "")
+    if not match:
+        return None
+    try:
+        value = float(match.group(1).replace(",", ""))
+    except ValueError:
+        return None
+    if match.group(2):
+        value *= 1000
+    return value
+
+
+def _within_km(question: str) -> float | None:
+    match = _WITHIN_KM_RE.search(question or "")
+    if not match:
+        return None
+    try:
+        return float(match.group(1))
+    except ValueError:
+        return None
+
+
+def _hotel_price_upper(price_range: Any) -> float | None:
+    """'₹750–₹1,100 per night' -> 1100.0 (worst-case bound)."""
+    if price_range is None:
+        return None
+    values: list[float] = []
+    for raw in re.findall(r"\d[\d,]*(?:\.\d+)?", str(price_range)):
+        try:
+            values.append(float(raw.replace(",", "")))
+        except ValueError:
+            continue
+    return max(values) if values else None
+
+
+def _restaurant_ceiling(record: dict, per_person: bool) -> float | None:
+    """Numeric ceiling the hard price filter can verify. Unknown -> None."""
+    if per_person:
+        cost = record.get("average_cost_for_one")
+        if cost is None and record.get("average_cost_for_two") is not None:
+            try:
+                return float(record["average_cost_for_two"]) / 2.0
+            except (TypeError, ValueError):
+                return None
+    else:
+        cost = record.get("average_cost_for_two")
+        if cost is None and record.get("average_cost_for_one") is not None:
+            try:
+                return float(record["average_cost_for_one"]) * 2.0
+            except (TypeError, ValueError):
+                return None
+    try:
+        return float(cost) if cost is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _select_static(
     records: list[dict[str, Any]],
     *,
@@ -338,12 +407,65 @@ def _select_static(
         if q_names:
             selected = [r for r in records if q_names & r["_name_tokens"]]
 
-    if selected and kind == "restaurant":
-        q_tokens = _tokens(question)
-        if q_tokens & {"veg", "vegetarian", "pureveg", "pure"}:
-            vegged = [r for r in selected if r.get("vegetarian")]
-            if vegged:
-                selected = vegged
+    # --- HARD dietary / price / facility constraints (audit D06/D07) ---
+    # Religious dietary requirements are NEVER silently relaxed: a pure-
+    # vegetarian request only matches records explicitly marked pure_veg;
+    # unknown is not a match. Same rule for explicit price caps and AC.
+    q_lower = (question or "").lower()
+    wants_pure = any(
+        phrase in q_lower
+        for phrase in ("pure veg", "pure vegetarian", "pureveg", "pure-veg")
+    )
+    wants_veg = wants_pure or bool(
+        _tokens(question) & {"veg", "vegetarian"}
+    )
+
+    if selected and kind == "restaurant" and wants_pure:
+        selected = [r for r in selected if r.get("pure_veg") is True]
+    elif selected and kind == "restaurant" and wants_veg:
+        vegged = [r for r in selected if r.get("vegetarian") is True]
+        if vegged:
+            selected = vegged
+
+    max_price = _max_price_rupees(question)
+    if selected and max_price is not None:
+        if kind == "restaurant":
+            selected = [
+                r for r in selected
+                if _restaurant_ceiling(r, "per person" in q_lower)
+                is not None
+                and _restaurant_ceiling(r, "per person" in q_lower)
+                <= max_price
+            ]
+        elif kind == "hotel":
+            kept = []
+            for r in selected:
+                upper = _hotel_price_upper(r.get("price_range"))
+                if upper is not None and upper <= max_price:
+                    kept.append(r)
+            selected = kept
+
+    wants_ac = bool(
+        re.search(r"\b(ac|a/c|air[- ]?condition)", q_lower)
+    )
+    if selected and kind == "hotel" and wants_ac:
+        kept = []
+        for r in selected:
+            amenities = [str(a).lower() for a in (r.get("amenities") or [])]
+            if any(
+                "air condition" in a or a in {"ac", "a/c"}
+                for a in amenities
+            ):
+                kept.append(r)
+        selected = kept
+
+    within_km = _within_km(question)
+    if selected and kind == "restaurant" and within_km is not None:
+        selected = [
+            r for r in selected
+            if r.get("distance_km") is not None
+            and float(r["distance_km"]) <= within_km
+        ]
 
     if kind == "restaurant":
         selected.sort(
@@ -723,6 +845,27 @@ def run(
                     "hint": None,
                 }
             )
+
+    # radius constraint on hotels: dataset has no per-hotel distance, so we
+    # must NOT pretend the radius was enforced (audit D07 honesty rule)
+    if (
+        kind == "hotel"
+        and selected
+        and _within_km(question) is not None
+    ):
+        evidence.append(
+            {
+                "source": "accommodation",
+                "kind": "note",
+                "key": "radius_unverified",
+                "error": (
+                    "Verified hotel records do not store exact distances "
+                    "from the temple, so the requested radius could not be "
+                    "confirmed for these hotels."
+                ),
+                "hint": None,
+            }
+        )
 
     # --- honest no-data note ---
     has_results = any(

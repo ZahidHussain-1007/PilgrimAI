@@ -29,6 +29,8 @@ export interface ItineraryActivity {
   id: string
   itineraryId?: string
   dayLabel?: string
+  /** audit C03: the numeric day must round-trip with the activity */
+  dayNumber?: number
   title: string
   location?: string
   kind?: string

@@ -35,10 +35,35 @@
     "గుండె నొప్పి",
     "గుండెపోటు",
     "మంటలు",
-    "పోలీసులు కావాలి"
+    "పోలీసులు కావాలి",
+    "मुझे सीने में दर्द हो रहा है",
+    "छाती में दर्द",
+    "मुझे एम्बुलेंस चाहिए",
+    "एम्बुलेंस भेजो",
+    "गंभीर रक्तस्राव",
+    "खून बह रहा है",
+    "बेहोश हो गया",
+    "बेहोशी",
+    "स्ट्रोक हो रहा है",
+    "आग लग गई",
+    "आग लगने की घटना",
+    "हादसा हो गया",
+    "सड़क हादसा",
+    "ज़हर खा लिया",
+    "फंदे से उतारो",
+    "సీనులో నొప్పి",
+    "ఛాతీ నొప్పి",
+    "స్ట్రోక్",
+    "విషం తాగాను",
+    "ఉరి వేసుకున్నాను"
   ],
   "geo_exempt_patterns": [
     "\\bemergency\\b"
   ],
-  "reply": "This may be an emergency. Contact your local emergency service immediately (112 in India) or ask someone nearby for urgent help. If you are in immediate danger, prioritize getting to a safe place and contacting emergency responders."
+  "reply": "This may be an emergency. Contact your local emergency service immediately (112 in India) or ask someone nearby for urgent help. If you are in immediate danger, prioritize getting to a safe place and contacting emergency responders.",
+  "replies": {
+    "en": "This may be a medical or safety emergency. Call 112 (police, national emergency) or 108 (ambulance) in India immediately. Do not wait for in-app help.",
+    "hi": "यह चिकित्सा या सुरक्षा आपातकाल हो सकता है। भारत में तुरंत 112 (पुलिस, राष्ट्रीय आपातकाल) या 108 (एम्बुलेंस) पर कॉल करें। ऐप में सहायता का इंतज़ार न करें।",
+    "te": "ఇది వైద్య లేదా భద్రతా అత్యవసర పరిస్థితి కావచ్చు. భారతదేశంలో వెంటనే 112 (పోలీసులు, జాతీయ అత్యవసర సేవ) లేదా 108 (అంబులెన్స్) కు కాల్ చేయండి. యాప్‌లో సహాయం కోసం వేచి ఉండకండి."
+  }
 }

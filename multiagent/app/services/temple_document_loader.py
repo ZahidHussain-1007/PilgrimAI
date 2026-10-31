@@ -30,6 +30,7 @@ NARRATIVE_FIELDS = {
     "temple_layout",
     "rituals",
     "special_poojas",
+    "dress_code",
     "festivals",
     "darshan_timings",
     "timing_conflict_note",
@@ -168,6 +169,7 @@ def _section_documents(
                         "fetched_at": fetched_at,
                         "valid_to": None,
                         "last_verified": temple.get("last_verified"),
+                        "sources": (temple.get("sources") or [])[:3],
                     },
                 )
             )
@@ -192,6 +194,7 @@ def _section_documents(
                 "fetched_at": fetched_at,
                 "valid_to": None,
                 "last_verified": temple.get("last_verified"),
+                "sources": (temple.get("sources") or [])[:3],
             },
         )
     )

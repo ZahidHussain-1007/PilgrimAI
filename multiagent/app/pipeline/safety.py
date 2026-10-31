@@ -11,6 +11,21 @@ POLICY_FILE = PROJECT_ROOT / "data" / "emergency" / "emergency_policy.json"
 _COMPILED: list[re.Pattern[str]] | None = None
 _GEO_EXEMPT: list[re.Pattern[str]] | None = None
 _REPLY: str | None = None
+_REPLIES: dict[str, str] | None = None
+
+_DEVANAGARI = re.compile(r"[\u0900-\u097F]")
+_TELUGU = re.compile(r"[\u0C00-\u0C7F]")
+
+
+def _detect_language(message: str) -> str:
+    """Script detection: Hindi / Telugu / else English (audit D04)."""
+    if not message:
+        return "en"
+    if _DEVANAGARI.search(message):
+        return "hi"
+    if _TELUGU.search(message):
+        return "te"
+    return "en"
 
 # A geographic qualifier turns a bare "emergency" mention into a NEAREST-
 # FACILITY question (which the agents answer from verified data + OSM).
@@ -20,7 +35,7 @@ _GEO_HINT = re.compile(r"\b(near|nearby|nearest|closest|around)\b", re.IGNORECAS
 
 
 def _load() -> None:
-    global _COMPILED, _GEO_EXEMPT, _REPLY
+    global _COMPILED, _GEO_EXEMPT, _REPLY, _REPLIES
 
     if _COMPILED is not None:
         return
@@ -46,6 +61,13 @@ def _load() -> None:
         or "This may be an emergency. Contact your local emergency services immediately (112 in India)."
     )
 
+    replies = data.get("replies")
+    _REPLIES = (
+        {str(k): str(v) for k, v in replies.items()}
+        if isinstance(replies, dict)
+        else {}
+    )
+
 
 def detect(message: str) -> bool:
     """True = life-threat -> direct safety reply (never reaches the LLM)."""
@@ -66,7 +88,17 @@ def detect(message: str) -> bool:
     return False
 
 
-def response() -> dict:
+def response(message: str | None = None) -> dict:
+    """Emergency reply. v14 (audit D04): language follows the caller's
+    script (Hindi/Telugu/English) from policy JSON — every language
+    carries the SAME numbers (112 police, 108 ambulance)."""
     _load()
     assert _REPLY is not None
-    return {"status": "EMERGENCY", "reply": _REPLY, "clarification": None}
+    lang = _detect_language(message or "")
+    reply = (_REPLIES or {}).get(lang) or _REPLY
+    return {
+        "status": "EMERGENCY",
+        "reply": reply,
+        "language": lang,
+        "clarification": None,
+    }

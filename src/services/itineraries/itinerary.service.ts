@@ -268,7 +268,8 @@ export class ItineraryService {
         start_time: input.startTime || null,
         end_time: input.endTime || null,
         description: input.description || null,
-        estimated_cost: input.estimatedCost || null,
+        // audit C04: `||` turned a legitimate ₹0 estimate into null
+        estimated_cost: input.estimatedCost ?? null,
         created_at: now,
       })
       .select()
@@ -281,6 +282,10 @@ export class ItineraryService {
     return {
       id: data.id,
       title: data.title,
+      // audit C03: dayNumber/location MUST round-trip or the UI collapses
+      // every activity onto "Day 1" after a save/reload.
+      dayNumber: data.day_number ?? 1,
+      location: data.location ?? undefined,
       startTime: data.start_time ?? undefined,
       endTime: data.end_time ?? undefined,
       description: data.description ?? undefined,

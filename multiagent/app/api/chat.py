@@ -74,11 +74,10 @@ def _response(
 
 
 def _emergency_reply(session_id: str, history: list, user: str) -> dict:
-    policy = safety.response()
-    _persist(
-        session_id,
-        _append_turn(history, user, policy["reply"], "emergency"),
-    )
+    # v14 (audit D04): language-aware policy reply (same 112/108).
+    policy = safety.response(user)
+    # v14 (audit D05): deterministic reply, no Redis read/write — an
+    # emergency must never wait on session storage.
     return _response(
         session_id=session_id,
         category="emergency",
@@ -95,12 +94,16 @@ def chat(request: ChatRequest) -> dict:
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
 
     session_id = request.session_id or str(uuid.uuid4())
+
+    # ---- STAGE 0: safety gate FIRST (audit D05) — BEFORE get_session:
+    # an emergency reply must never wait on Redis. Session I/O is skipped
+    # entirely on this path; the deterministic policy reply goes out now.
+    # ----
+    if safety.detect(message):
+        return _emergency_reply(session_id, [], message)
+
     existing = get_session(session_id) or {}
     history = existing.get("history", [])
-
-    # ---- STAGE 0: safety gate (no LLM) ----
-    if safety.detect(message):
-        return _emergency_reply(session_id, history, message)
 
     # ---- STAGE 1: brain (LLM #1) ----
     try:

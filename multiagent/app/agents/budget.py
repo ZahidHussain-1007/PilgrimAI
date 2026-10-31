@@ -129,16 +129,19 @@ def _parse_price_range(text: Any) -> tuple[int, int] | None:
     if values:
         # capture a bare right-side range value: "₹100–200" -> 100, 200
         bare = [
-            int(n.replace(",", ""))
+            int(float(n.replace(",", "")))  # "200.50" must not crash (C08)
             for n in re.findall(r"[–—\-]\s*(\d[\d,]*(?:\.\d+)?)\b", raw)
         ]
         values.extend(bare)
         return min(values), max(values)
-    # fall back for forms like "700-1000" without the ₹ glyph
+    # Fallback for "700-1000" without the ₹ glyph — but only for
+    # plausible money amounts (audit C09): phone numbers and IDs must
+    # never be parsed as prices, so cap at ₹99,999 per item.
     numbers = [
         int(n.replace(",", ""))
         for n in re.findall(r"\b(\d{1,3}(?:,\d{3})+|\d+)\b", raw)
     ]
+    numbers = [n for n in numbers if n <= 99_999]
     if numbers:
         return min(numbers), max(numbers)
     return None

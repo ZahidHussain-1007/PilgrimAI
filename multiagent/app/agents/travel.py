@@ -3,6 +3,8 @@ evidence (facts + calculations + notes). Google first when a key is configured,
 then OSRM, then Haversine (approximate)."""
 from __future__ import annotations
 
+import math
+
 import json
 from pathlib import Path
 
@@ -167,49 +169,179 @@ def _emergency_sections(question: str, live_kind: str | None) -> list[str]:
         sections.append("police")
     if live_kind == "pharmacy" and "pharmacies" not in sections:
         sections.append("pharmacies")
+    if live_kind == "fire_station" and "fire_rescue" not in sections:
+        sections.append("fire_rescue")
+    if live_kind == "ambulance" and "ambulance_services" not in sections:
+        sections.append("ambulance_services")
     return sections
 
 
+def _haversine_km(
+    a_lat: float, a_lng: float, b_lat: float, b_lng: float
+) -> float:
+    """Straight-line km between two WGS84 points (audit D01 distances)."""
+    r = 6371.0
+    p1, p2 = math.radians(a_lat), math.radians(b_lat)
+    dp = math.radians(b_lat - a_lat)
+    dl = math.radians(b_lng - a_lng)
+    h = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return round(2 * r * math.asin(math.sqrt(h)), 2)
+
+
+_EMERGENCY_NAME_KEYS = (
+    "name",
+    "police_station_name",
+    "fire_station_name",
+    "service_name",
+    "hospital_name",
+)
+_EMERGENCY_PHONE_KEYS = (
+    "phone",
+    "emergency_phone",
+    "station_phone",
+    "contact_number",
+)
+_EMERGENCY_DISTANCE_KEYS = (
+    "distance_from_temple_km",
+    "distance_from_temple",
+    "distance_km",
+    "distance",
+)
+_MAX_EMERGENCY_KM = 30.0
+
+
+def _emergency_field(item: dict, keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, dict):
+            inner = value.get("value")
+            if isinstance(inner, str) and inner.strip():
+                return inner.strip()
+    return ""
+
+
+def _emergency_coords(item: dict) -> tuple[float | None, float | None]:
+    lat = item.get("latitude")
+    lon = item.get("longitude")
+    coords = item.get("coordinates")
+    if isinstance(coords, dict):
+        if lat is None:
+            lat = coords.get("latitude", coords.get("lat"))
+        if lon is None:
+            lon = coords.get("longitude", coords.get("lon", coords.get("lng")))
+    try:
+        return (
+            float(lat) if lat is not None else None,
+            float(lon) if lon is not None else None,
+        )
+    except (TypeError, ValueError):
+        return None, None
+
+
+def _emergency_distance_km(item: dict) -> float | None:
+    for key in _EMERGENCY_DISTANCE_KEYS:
+        value = item.get(key)
+        if value is None:
+            continue
+        try:
+            text = str(value).lower().replace("km", "").strip()
+            return round(float(text), 2)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 def _emergency_evidence(
-    temple_id: str, question: str, live_kind: str | None
-) -> list[dict]:
+    temple_id: str,
+    question: str,
+    live_kind: str | None,
+    place: dict | None = None,
+) -> tuple[list[dict], list[str]]:
     """Verified facilities from data/emergency/T*.json (hospitals, police,
-    pharmacies, ambulance, fire) - always available, no network needed."""
+    pharmacies, ambulance, fire) - always available, no network needed.
+
+    v14 (audit D03): every section's real key names are read (police uses
+    'police_station_name', fire 'fire_station_name', ambulance
+    'service_name' - the old 'name'-only gate dropped them entirely).
+    v14 (audit D01): when the anchor place resolved, distances are
+    recomputed from its coordinates; records whose stored coordinates
+    imply an implausible distance (>30 km) are EXCLUDED with an honest
+    note instead of being shown with a wrong anchor."""
     record = _emergency_index_load().get(temple_id)
     if not record:
-        return []
+        return [], []
     sections = _emergency_sections(question, live_kind)
     evidence: list[dict] = []
+    skipped: list[str] = []
+    # `place` is a ResolvedPlace model (attr access) — accept dicts too.
+    p_lat = getattr(place, "lat", None) if place is not None else None
+    p_lon = getattr(place, "lon", None) if place is not None else None
+    if isinstance(place, dict):
+        p_lat = place.get("lat", p_lat)
+        p_lon = place.get("lon", p_lon)
     for section in sections:
         for item in (record.get("emergency") or {}).get(section) or []:
-            if not isinstance(item, dict) or not item.get("name"):
+            if not isinstance(item, dict):
                 continue
-            phone = str(
-                item.get("phone") or item.get("emergency_phone") or ""
-            ).strip()
+            name = _emergency_field(item, _EMERGENCY_NAME_KEYS)
+            phone = _emergency_field(item, _EMERGENCY_PHONE_KEYS)
+            if not name:
+                # 25/27 ambulance records store an EMPTY service_name and
+                # 1 fire record is blank. If a verified phone exists, label
+                # the facility TYPE (never invent a proper name); records
+                # with neither name nor phone are placeholders — skip.
+                if phone and section == "ambulance_services":
+                    name = "Ambulance service"
+                elif phone and section == "fire_rescue":
+                    name = "Fire station"
+                else:
+                    continue
+            r_lat, r_lon = _emergency_coords(item)
+            distance = _emergency_distance_km(item)
+            distance_source = "dataset" if distance is not None else None
+            if (
+                p_lat is not None
+                and p_lon is not None
+                and r_lat is not None
+                and r_lon is not None
+            ):
+                computed = _haversine_km(p_lat, p_lon, r_lat, r_lon)
+                if computed > _MAX_EMERGENCY_KM:
+                    skipped.append(
+                        f"{name} ({section}) — stored coordinates imply "
+                        f"{computed:.1f} km from the resolved place"
+                    )
+                    continue
+                distance = computed
+                distance_source = "computed"
             evidence.append(
                 {
                     "source": "temple_emergency",
                     "kind": "poi",
                     "source_tier": "verified-data",
-                    "name": str(item.get("name") or "").strip(),
+                    "name": name,
                     "category": section,
                     "cuisine": None,
                     "phone": phone or None,
                     "website": str(item.get("website") or "").strip() or None,
                     "address": str(item.get("address") or "").strip() or None,
-                    "latitude": item.get("latitude"),
-                    "longitude": item.get("longitude"),
-                    "distance_km": item.get("distance_from_temple_km"),
+                    "latitude": r_lat,
+                    "longitude": r_lon,
+                    "distance_km": distance,
+                    "distance_source": distance_source,
                     "travel_time": item.get("estimated_travel_time"),
                     "hours": str(item.get("opening_hours") or "").strip()
                     or None,
-                    "open_24x7": item.get("24x7_emergency"),
+                    "open_24x7": item.get("24x7_emergency")
+                    if item.get("24x7_emergency") is not None
+                    else item.get("24x7"),
                     "google_maps_url": item.get("google_maps_url"),
                     "temple_id": temple_id,
                 }
             )
-    return evidence[:6]
+    return evidence[:6], skipped
 
 
 def _live_kind(question: str) -> str | None:
@@ -286,10 +418,24 @@ def _run_nearby(subquery: dict) -> dict:
     # ambulance/fire) - no network needed, answers even when OSM is down.
     emergency_items: list[dict] = []
     if temple_id:
-        emergency_items = _emergency_evidence(
-            temple_id, question, pre_live_kind
+        emergency_items, emergency_skipped = _emergency_evidence(
+            temple_id, question, pre_live_kind, place
         )
         evidence.extend(emergency_items)
+        if emergency_skipped:
+            evidence.append(
+                {
+                    "source": "emergency",
+                    "kind": "note",
+                    "source_tier": "verified-data",
+                    "key": "anchor_conflict_excluded",
+                    "content": (
+                        "Some emergency records were excluded because their "
+                        "stored coordinates are inconsistent with the "
+                        "resolved place: " + "; ".join(emergency_skipped[:3])
+                    ),
+                }
+            )
 
     # Verified dataset layer: nearby attractions of an OUR temple always
     # answer from the curated temple JSON (never model memory).
