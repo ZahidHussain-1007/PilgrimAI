@@ -108,42 +108,51 @@ def _extract_params(question: str) -> dict[str, Any]:
 # money parsing (dataset strings -> integer rupee ranges)
 # ---------------------------------------------------------------------------
 
-def _money_values(text: Any) -> list[int]:
+def _money_values(text: Any) -> list[float]:
+    """Currency-marked amounts (₹…) as floats — decimals keep precision
+    (audit C08: ₹100–200.50 must not collapse to 200)."""
     if text is None:
         return []
-    values: list[int] = []
+    values: list[float] = []
     for raw in _MONEY_RE.findall(str(text)):
         try:
-            values.append(int(float(raw.replace(",", ""))))
+            values.append(float(raw.replace(",", "")))
         except ValueError:
             continue
     return values
 
 
-def _parse_price_range(text: Any) -> tuple[int, int] | None:
-    """'₹700–₹1,000 per night (Approx.)' -> (700, 1000); '₹100–200' -> (100, 200)"""
+def _parse_price_range(text: Any) -> tuple[float, float] | None:
+    """'₹700–₹1,000 per night (Approx.)' -> (700.0, 1000.0);
+    '₹100–200.50' -> (100.0, 200.5) — decimals are preserved (C08)."""
     if text is None:
         return None
     raw = str(text)
     values = _money_values(raw)
     if values:
-        # capture a bare right-side range value: "₹100–200" -> 100, 200
+        # capture a bare right-side range value: "₹100–200.50" -> 200.5
         bare = [
-            int(float(n.replace(",", "")))  # "200.50" must not crash (C08)
+            float(n.replace(",", ""))
             for n in re.findall(r"[–—\-]\s*(\d[\d,]*(?:\.\d+)?)\b", raw)
         ]
         values.extend(bare)
         return min(values), max(values)
-    # Fallback for "700-1000" without the ₹ glyph — but only for
-    # plausible money amounts (audit C09): phone numbers and IDs must
-    # never be parsed as prices, so cap at ₹99,999 per item.
-    numbers = [
-        int(n.replace(",", ""))
-        for n in re.findall(r"\b(\d{1,3}(?:,\d{3})+|\d+)\b", raw)
-    ]
-    numbers = [n for n in numbers if n <= 99_999]
-    if numbers:
-        return min(numbers), max(numbers)
+    # Fallback for "700-1000" WITHOUT the ₹ glyph — audit C09: a lone
+    # number is never money. Only an explicit dash RANGE of plausible
+    # amounts counts; "Opened in 2024" / "Phone extension 1234" / phone
+    # numbers are rejected.
+    range_pair = re.search(
+        r"\b(\d[\d,]*(?:\.\d+)?)\s*[–—\-]\s*(\d[\d,]*(?:\.\d+)?)\b",
+        raw,
+    )
+    if range_pair:
+        try:
+            low = float(range_pair.group(1).replace(",", ""))
+            high = float(range_pair.group(2).replace(",", ""))
+        except ValueError:
+            return None
+        if 0 <= low <= 99_999 and 0 <= high <= 99_999:
+            return min(low, high), max(low, high)
     return None
 
 
@@ -741,8 +750,8 @@ def run(
                 {
                     "source": "budget",
                     "kind": "budget_total",
-                    "low": sum(int(t["low"]) for t in totals),
-                    "high": sum(int(t["high"]) for t in totals),
+                    "low": sum(float(t["low"]) for t in totals),
+                    "high": sum(float(t["high"]) for t in totals),
                     "unit": "currency",
                     "components_included": components,
                     "partial": bool(absent),

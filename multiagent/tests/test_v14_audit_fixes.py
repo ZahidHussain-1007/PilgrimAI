@@ -252,12 +252,15 @@ def test_structured_render_keeps_hotel_and_poi_fields():
     assert "rating: 4.3" in out
     assert "phone: 0870-2412345" in out
     assert "Kondagattu viewpoint" in out
-    assert "distance_km: 1.2" in out
+    assert "distance: 1.2" in out
 
 
 # --------------------------------------------------------------------- C08/C09
 def test_money_parsing_decimal_and_phone_guards():
-    assert budget._parse_price_range("₹100–200.50") == (100, 200)
+    # v15 (audit C08): decimals are PRESERVED, not truncated
+    assert budget._parse_price_range("₹100–200.50") == (100, 200.5)
+    assert budget._parse_price_range("Opened in 2024") is None
+    assert budget._parse_price_range("Phone extension 1234") is None
     assert budget._parse_price_range("Contact hotel on 9876543210") is None
     assert budget._parse_price_range("₹700–₹1,000 per night (Approx.)") == (700, 1000)
 

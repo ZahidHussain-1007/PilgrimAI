@@ -15,6 +15,7 @@ from app.pipeline.compose import clarify as compose_clarify
 from app.pipeline.run import execute
 from app.pipeline.validator import (
     collect_evidence,
+    find_misattributed_numbers,
     find_missing_numbers,
     render_structured,
 )
@@ -234,6 +235,12 @@ def chat(request: ChatRequest) -> dict:
         )
 
         missing = find_missing_numbers(reply, results)
+        # v15 (audit C17): numbers attributed to the WRONG record (e.g.
+        # Hotel A priced with Hotel B's figure) are flagged the same way
+        missing += [
+            n for n in find_misattributed_numbers(reply, results)
+            if n not in missing
+        ]
         rounds = 0
         if missing:
             logger.warning("number validation flagged: %s", missing)
@@ -249,6 +256,10 @@ def chat(request: ChatRequest) -> dict:
                 )
             )
             missing = find_missing_numbers(reply, results)
+            missing += [
+                n for n in find_misattributed_numbers(reply, results)
+                if n not in missing
+            ]
             if missing:
                 logger.warning(
                     "number validation after round %d flagged: %s",

@@ -8,6 +8,8 @@ curated data instead of failing.
 """
 from __future__ import annotations
 
+import re
+
 import json
 from pathlib import Path
 from typing import Any
@@ -125,16 +127,43 @@ def _select_fallback_fields(question: str | None) -> list[tuple[str, str]]:
     return selected[:10]
 
 
+_URL_IN_TEXT_RE = re.compile(r"https?://[^\s<>\"'\])}]+")
+_URL_TRAIL_RE = re.compile(r"[.,;:!?'’”]+$")
+
+
 def _first_source_url(sources: object) -> str | None:
-    """First usable URL from the temple record's sources list (R01)."""
+    """First usable URL from the temple record's sources list (R01).
+
+    v15 (audit R01): real source strings are messy —
+    "Wikipedia: https://en.wikipedia.org/wiki/X (accessed …)" or
+    {"url": "…"} — so embedded URLs are extracted and trailing
+    punctuation/annotations stripped instead of requiring the whole
+    string to start with http."""
+    candidates: list[str] = []
     if isinstance(sources, list):
-        for item in sources:
-            if isinstance(item, dict):
-                url = str(item.get("url") or "").strip()
-                if url.startswith("http"):
-                    return url
-            elif isinstance(item, str) and item.strip().startswith("http"):
-                return item.strip()
+        items: list[object] = list(sources)
+    elif sources is None:
+        items = []
+    else:
+        items = [sources]
+    for item in items:
+        if isinstance(item, dict):
+            for key in ("url", "link", "href", "source_url"):
+                value = item.get(key)
+                if isinstance(value, str) and value.strip():
+                    candidates.append(value.strip())
+            for key in ("name", "title", "reference"):
+                value = item.get(key)
+                if isinstance(value, str):
+                    candidates.append(value)
+        elif isinstance(item, str):
+            candidates.append(item)
+    for text in candidates:
+        if text.startswith("http"):
+            return _URL_TRAIL_RE.sub("", text)
+        match = _URL_IN_TEXT_RE.search(text)
+        if match:
+            return _URL_TRAIL_RE.sub("", match.group(0))
     return None
 
 
@@ -192,6 +221,10 @@ def _dataset_evidence(
                     "field_name": field,
                     "section": label,
                     "source_tier": "internal_dataset",
+                    # v15 (audit R01): fallback path keeps the same
+                    # citation contract as the vector path
+                    "last_verified": temple.get("last_verified"),
+                    "source_url": _first_source_url(temple.get("sources")),
                 }
             )
     return evidence[:12]

@@ -2,6 +2,8 @@
 the evidence. Also provides the structured (no-LLM) fallback renderer."""
 from __future__ import annotations
 
+import json
+
 import re
 from typing import Any
 
@@ -107,6 +109,72 @@ def find_missing_numbers(draft: str, results: list[dict]) -> list[str]:
     return missing
 
 
+def _fmt_money(value: Any) -> str:
+    """₹700 not ₹700.0, but ₹200.5 keeps its decimals (audit C08)."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if number.is_integer():
+        return str(int(number))
+    return f"{number:g}"
+
+
+def _serialize_item(item: dict) -> str:
+    parts: list[str] = []
+    for key, value in item.items():
+        if isinstance(value, (dict, list, tuple)):
+            parts.append(json.dumps(value, ensure_ascii=False, default=str))
+        else:
+            parts.append(f"{key} {value}")
+    return "\n".join(parts)
+
+
+def find_misattributed_numbers(draft: str, results: list[dict]) -> list[str]:
+    """v15 (audit C17): global number matching can approve a SWAPPED
+    claim — "Hotel A costs ₹900" passes when only Hotel B's record says
+    900. For each sentence that names exactly ONE evidence record, any
+    number that exists globally but NOT in that record's own text is
+    flagged as misattributed (fed back like a missing number)."""
+    named_items: list[tuple[str, str, set[str]]] = []
+    for result in results:
+        for item in result.get("evidence") or []:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            if len(name) < 4:
+                continue
+            named_items.append(
+                (name.lower(), _serialize_item(item), _corpus_numbers(_serialize_item(item)))
+            )
+    if not named_items:
+        return []
+
+    flagged: list[str] = []
+    for sentence in re.split(r"(?<=[.!?।\n])\s+", draft):
+        tokens = [
+            t for t in _NUMBER_RE.findall(_strip_thousands(sentence))
+            if t.strip()
+        ]
+        if not tokens:
+            continue
+        hits = [entry for entry in named_items if entry[0] in sentence.lower()]
+        if len(hits) != 1:
+            continue  # zero or ambiguous attribution → stay with old rule
+        _, _, own_numbers = hits[0]
+        for token in tokens:
+            normalized = _normalize_number(token)
+            if normalized & own_numbers:
+                continue
+            # number exists SOMEWHERE in results but not in the named
+            # record → the sentence attributes another record's fact
+            if not any(_normalize_number(token) & it[2] for it in named_items):
+                continue  # globally missing — handled by find_missing_numbers
+            if token not in flagged:
+                flagged.append(token)
+    return flagged
+
+
 def render_structured(results: list[dict]) -> str:
     """LLM-free degraded answer: raw structured facts, one per line.
 
@@ -143,7 +211,12 @@ def render_structured(results: list[dict]) -> str:
                 lines.append(f"{item.get('role')}: {item.get('name')}")
             elif kind == "note" or kind == "error":
                 hint = item.get("hint")
-                base = str(item.get("error") or item.get("key") or "note")
+                base = str(
+                    item.get("error")
+                    or item.get("content")  # notes emitted with `content`
+                    or item.get("key")
+                    or "note"
+                )
                 lines.append(f"{base}{(' - ' + str(hint)) if hint else ''}")
             elif kind == "status":
                 lines.append(
@@ -151,28 +224,33 @@ def render_structured(results: list[dict]) -> str:
                     + (f", selected: {item.get('selected')}" if item.get("selected") else "")
                 )
             elif kind in {"hotel", "restaurant", "poi"}:
-                # structured stays (audit C16): a bare "text" dump hides
-                # every other field - print name + the useful keys.
+                # structured stays (audit C16): print name + the REAL keys
+                # the emitters use — hotels carry `phones`/`map_link`, not
+                # `phone`/`maps_link` (that mismatch hid every contact).
                 name = item.get("name")
                 lines.append(f"{kind}: {name}" if name else f"{kind}: (unnamed)")
-                for key in (
-                    "rating",
-                    "reviews",
-                    "price",
-                    "price_range",
-                    "price_category",
-                    "average_cost_for_two",
-                    "phone",
-                    "address",
-                    "distance_km",
-                    "maps_link",
-                    "google_maps_url",
-                    "note",
-                    "error",
+                for label, val in (
+                    ("rating", item.get("rating")),
+                    ("reviews", item.get("reviews")),
+                    ("price", item.get("price")),
+                    ("price_range", item.get("price_range")),
+                    ("price_category", item.get("price_category")),
+                    ("average_cost_for_two", item.get("average_cost_for_two")),
+                    ("phone", item.get("phone") or item.get("phones")),
+                    ("address", item.get("address")),
+                    ("distance", item.get("distance_km")),
+                    ("map", item.get("maps_link") or item.get("map_link")
+                     or item.get("google_maps_url")),
+                    ("website", item.get("website")),
+                    ("cuisine", item.get("cuisine")),
+                    ("open", item.get("open")),
+                    ("note", item.get("note")),
+                    ("error", item.get("error")),
                 ):
-                    val = item.get(key)
                     if val not in (None, "", []):
-                        lines.append(f"  {key}: {val}")
+                        if isinstance(val, (list, tuple)):
+                            val = ", ".join(str(v) for v in val)
+                        lines.append(f"  {label}: {val}")
             elif kind == "budget_item":
                 component = item.get("component") or "cost"
                 scope = item.get("scope") or ""
@@ -187,10 +265,13 @@ def render_structured(results: list[dict]) -> str:
                         else f"{label}: no priced entries"
                     )
                 elif high is None or low == high:
-                    lines.append(f"{component} {scope}: {symbol}{low}".rstrip())
+                    lines.append(
+                        f"{component} {scope}: {symbol}{_fmt_money(low)}".rstrip()
+                    )
                 else:
                     lines.append(
-                        f"{component} {scope}: {symbol}{low} - {symbol}{high}".rstrip()
+                        f"{component} {scope}: {symbol}{_fmt_money(low)}"
+                        f" - {symbol}{_fmt_money(high)}".rstrip()
                     )
                 for sample in item.get("samples") or []:
                     if isinstance(sample, dict):
@@ -199,10 +280,19 @@ def render_structured(results: list[dict]) -> str:
                         )
             elif kind == "budget_total":
                 covers = item.get("components_included") or []
-                lines.append(
-                    f"budget total: ₹{item.get('low')} - ₹{item.get('high')}"
+                missing = item.get("components_missing") or []
+                line = (
+                    f"budget total: ₹{_fmt_money(item.get('low'))}"
+                    f" - ₹{_fmt_money(item.get('high'))}"
                     + (f" (covers: {', '.join(str(c) for c in covers)})" if covers else "")
                 )
+                if item.get("partial") or missing:
+                    line += (
+                        " [PARTIAL — missing: "
+                        + (", ".join(str(c) for c in missing) or "unknown")
+                        + "]"
+                    )
+                lines.append(line)
             else:
                 text = str(item.get("text") or "").strip()
                 if text:

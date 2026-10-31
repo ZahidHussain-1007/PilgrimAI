@@ -163,30 +163,46 @@ function validateItineraryDays(value: unknown): CreateItineraryInput["days"] {
   if (value.length > 60) {
     throw new BadRequestError("Itinerary days cannot exceed 60")
   }
+  let totalActivities = 0
   return value.map((rawDay, index) => {
-    if (typeof rawDay !== "object" || rawDay === null) {
+    if (typeof rawDay !== "object" || rawDay === null || Array.isArray(rawDay)) {
       throw new BadRequestError(`Day ${index + 1} must be an object`)
     }
     const day = rawDay as Record<string, unknown>
     const rawActivities = day.activities
-    const activities =
-      rawActivities === undefined || rawActivities === null
-        ? []
-        : (Array.isArray(rawActivities) ? rawActivities : []).map(
-            (rawActivity, activityIndex) => {
-              if (typeof rawActivity !== "object" || rawActivity === null) {
-                throw new BadRequestError(
-                  `Day ${index + 1} activity ${activityIndex + 1} must be an object`,
-                )
-              }
-              const activity = rawActivity as Record<string, unknown>
-              const validated = validateCreateItineraryItemInput(activity)
-              return {
-                ...validated,
-                dayNumber: index + 1,
-              }
-            },
+    // v15 (audit N01): a non-array `activities` was silently mapped to []
+    // — malformed input must be rejected, never emptied.
+    if (
+      rawActivities !== undefined &&
+      rawActivities !== null &&
+      !Array.isArray(rawActivities)
+    ) {
+      throw new BadRequestError(
+        `Day ${index + 1} activities must be an array`,
+      )
+    }
+    const activities = (Array.isArray(rawActivities) ? rawActivities : []).map(
+      (rawActivity, activityIndex) => {
+        if (typeof rawActivity !== "object" || rawActivity === null) {
+          throw new BadRequestError(
+            `Day ${index + 1} activity ${activityIndex + 1} must be an object`,
           )
+        }
+        const activity = rawActivity as Record<string, unknown>
+        const validated = validateCreateItineraryItemInput(activity)
+        return {
+          ...validated,
+          dayNumber: index + 1,
+        }
+      },
+    )
+    if (activities.length > 40) {
+      throw new BadRequestError(`Day ${index + 1} cannot exceed 40 activities`)
+    }
+    totalActivities += activities.length
+    if (totalActivities > 200) {
+      throw new BadRequestError("Itinerary cannot exceed 200 activities total")
+    }
     return {
       label: validateOptionalString(day.label, "Day label", 100) || `Day ${index + 1}`,
       activities,
@@ -203,7 +219,13 @@ export function validateCreateItineraryItemInput(data: unknown) {
     dayLabel: validateOptionalString(raw.dayLabel, "Day label", 100) || "Day 1",
     // audit C02: keep the caller's dayNumber and location — dropping them
     // forced every activity onto day 1 with no location.
-    dayNumber: validateOptionalNumber(raw.dayNumber, "Day number", 1, 60),
+    dayNumber: (() => {
+      const n = validateOptionalNumber(raw.dayNumber, "Day number", 1, 60)
+      if (n !== undefined && !Number.isInteger(n)) {
+        throw new BadRequestError("Day number must be a whole number")
+      }
+      return n
+    })(),
     location: validateOptionalString(raw.location, "Location", 200),
     title: validateRequiredString(raw.title, "Activity title", 1, 200),
     kind: validateOptionalString(raw.kind, "Activity kind", 50) || "darshan",

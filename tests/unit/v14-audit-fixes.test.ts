@@ -82,3 +82,48 @@ describe("C24 — richText URL parsing keeps apostrophes", () => {
     expect((quotedLink as { href: string }).href).toContain("It's_here")
   })
 })
+
+describe("N01 — nested validation rejects malformed input", () => {
+  it("rejects a non-array activities object instead of emptying it", () => {
+    expect(() =>
+      validateCreateItineraryInput({
+        title: "Trip",
+        days: [{ label: "Day 1", activities: { title: "orphan" } }],
+      }),
+    ).toThrow()
+  })
+
+  it("rejects fractional day numbers on items", () => {
+    expect(() =>
+      validateCreateItineraryItemInput({ title: "Walk", dayNumber: 1.5 }),
+    ).toThrow()
+  })
+
+  it("rejects oversized days (41 activities in one day)", () => {
+    expect(() =>
+      validateCreateItineraryInput({
+        title: "Trip",
+        days: [
+          {
+            label: "Day 1",
+            activities: Array.from({ length: 41 }, (_, i) => ({
+              title: `Act ${i}`,
+            })),
+          },
+        ],
+      }),
+    ).toThrow()
+  })
+
+  it("still accepts a normal two-day input", () => {
+    const input = validateCreateItineraryInput({
+      title: "Family trip",
+      days: [
+        { label: "Day 1", activities: [{ title: "Kondagattu" }] },
+        { label: "Day 2", activities: [{ title: "Vemulawada" }] },
+      ],
+    })
+    expect(input.days).toHaveLength(2)
+    expect(input.days?.[1].activities?.[0].dayNumber).toBe(2)
+  })
+})

@@ -103,7 +103,15 @@ export class AiService {
       for (const item of response.evidence) {
         if (!item || typeof item !== "object") continue
         const label = evidenceLabel(item)
-        const href = typeof item.url === "string" && item.url.startsWith("http") ? item.url : undefined
+        // v15 (audit R01): backend evidence carries `source_url` — the
+        // mapper only read `url`, so every citation link was dropped.
+        const rawHref =
+          typeof item.source_url === "string" && item.source_url.startsWith("http")
+            ? item.source_url
+            : typeof item.url === "string" && item.url.startsWith("http")
+              ? item.url
+              : undefined
+        const href = rawHref
         const key = `${label}:${href || ""}`
         if (label && !seenSources.has(key)) {
           seenSources.add(key)

@@ -176,6 +176,38 @@ def _emergency_sections(question: str, live_kind: str | None) -> list[str]:
     return sections
 
 
+def _place_coordinates(place: Any) -> tuple[float | None, float | None]:
+    """v15 (audit D01): the production anchor is a ResolvedPlace whose
+    coordinates live at `place.coordinates.latitude/longitude`. Reading
+    top-level place.lat silently returned None in production and skipped
+    the whole guard — support the real shape first, then fallbacks."""
+    if place is None:
+        return None, None
+    coords = getattr(place, "coordinates", None)
+    if coords is not None and not isinstance(coords, dict):
+        lat = getattr(coords, "latitude", None)
+        lon = getattr(coords, "longitude", None)
+        if lat is not None or lon is not None:
+            try:
+                return float(lat), float(lon)
+            except (TypeError, ValueError):
+                pass
+    if isinstance(place, dict):
+        coords = place.get("coordinates")
+        if isinstance(coords, dict):
+            return coords.get("latitude"), coords.get("longitude")
+        return place.get("lat"), place.get("lon")
+    lat = getattr(place, "lat", None)
+    lon = getattr(place, "lon", None)
+    try:
+        return (
+            float(lat) if lat is not None else None,
+            float(lon) if lon is not None else None,
+        )
+    except (TypeError, ValueError):
+        return None, None
+
+
 def _haversine_km(
     a_lat: float, a_lng: float, b_lat: float, b_lng: float
 ) -> float:
@@ -208,6 +240,16 @@ _EMERGENCY_DISTANCE_KEYS = (
     "distance",
 )
 _MAX_EMERGENCY_KM = 30.0
+
+
+def _first_of(item: dict, keys: tuple[str, ...]) -> Any:
+    """First non-null raw value among alias keys (audit D03: fire uses
+    24x7_status/travel_time, hospitals 24x7_emergency/estimated_*)."""
+    for key in keys:
+        value = item.get(key)
+        if value is not None and value != "":
+            return value
+    return None
 
 
 def _emergency_field(item: dict, keys: tuple[str, ...]) -> str:
@@ -275,12 +317,7 @@ def _emergency_evidence(
     sections = _emergency_sections(question, live_kind)
     evidence: list[dict] = []
     skipped: list[str] = []
-    # `place` is a ResolvedPlace model (attr access) — accept dicts too.
-    p_lat = getattr(place, "lat", None) if place is not None else None
-    p_lon = getattr(place, "lon", None) if place is not None else None
-    if isinstance(place, dict):
-        p_lat = place.get("lat", p_lat)
-        p_lon = place.get("lon", p_lon)
+    p_lat, p_lon = _place_coordinates(place)
     for section in sections:
         for item in (record.get("emergency") or {}).get(section) or []:
             if not isinstance(item, dict):
@@ -331,12 +368,22 @@ def _emergency_evidence(
                     "longitude": r_lon,
                     "distance_km": distance,
                     "distance_source": distance_source,
-                    "travel_time": item.get("estimated_travel_time"),
+                    "travel_time": _first_of(
+                        item, ("estimated_travel_time", "travel_time")
+                    ),
+                    "availability": _first_of(item, ("availability",)),
                     "hours": str(item.get("opening_hours") or "").strip()
                     or None,
-                    "open_24x7": item.get("24x7_emergency")
-                    if item.get("24x7_emergency") is not None
-                    else item.get("24x7"),
+                    "open_24x7": _first_of(
+                        item,
+                        (
+                            "24x7_emergency",
+                            "24x7",
+                            "24x7_status",
+                            "open_24x7",
+                            "24x7",
+                        ),
+                    ),
                     "google_maps_url": item.get("google_maps_url"),
                     "temple_id": temple_id,
                 }

@@ -292,28 +292,69 @@ def _load_restaurants() -> list[dict[str, Any]]:
 # static selection: temple_ids (registry-resolved) -> place tokens -> names
 # ---------------------------------------------------------------------------
 
+# v15 (audit D07): "within 2 km" must NEVER become a ₹2,000 cap — a cap
+# counts only when a currency marker (₹ / rs / inr / rupees) is present
+# in the match, and the k/thousand suffix must be a whole word ("km" is
+# not "kilo-thousand"). All valid caps are collected; the most
+# conservative (minimum) wins so a later "under ₹200" cannot be shadowed.
 _MAX_PRICE_RE = re.compile(
     r"(?:under|below|within|upto|up to|less than|max(?:imum)?(?: of)?"
-    r"|budget(?: of)?)\s*(?:₹|rs\.?\s*|inr\s*)?(\d[\d,]*(?:\.\d+)?)"
-    r"\s*(k|thousand)?",
+    r"|budget(?: of)?)\s*"
+    r"(?:₹|inr\.?\s+|rs\.?\s+|rupees?\s+|₹\s*)?"
+    r"(\d[\d,]*(?:\.\d+)?)\s*(?:k\b|thousand\b)?"
+    r"[\s]*(?:₹|rupees?\b|p\.?a\.?\b|per\b)?",
     re.IGNORECASE,
 )
+_CURRENCY_MARK_RE = re.compile(r"₹|\brs\.?\b|\binr\b|\brupees?\b", re.IGNORECASE)
+_OCCUPANCY_RE = re.compile(
+    r"\b(?:family of\s*\d+|\d+\s*(?:adults?|persons?|people|guests?)"
+    r"|occupancy|triple[\s-]?sharing|double[\s-]?sharing|extra\s+bed)\b",
+    re.IGNORECASE,
+)
+
+
+def _wants_occupancy(question: str) -> bool:
+    return bool(_OCCUPANCY_RE.search(question or ""))
+
+
 _WITHIN_KM_RE = re.compile(
     r"\bwithin\s+(\d+(?:\.\d+)?)\s*km\b", re.IGNORECASE
 )
 
 
 def _max_price_rupees(question: str) -> float | None:
-    match = _MAX_PRICE_RE.search(question or "")
-    if not match:
+    caps: list[float] = []
+    for match in _MAX_PRICE_RE.finditer(question or ""):
+        if not _CURRENCY_MARK_RE.search(match.group(0)):
+            continue  # no currency marker → not money (audit D07/C09)
+        try:
+            value = float(match.group(1).replace(",", ""))
+        except ValueError:
+            continue
+        caps.append(value)
+    if not caps:
         return None
-    try:
-        value = float(match.group(1).replace(",", ""))
-    except ValueError:
-        return None
-    if match.group(2):
-        value *= 1000
-    return value
+    return min(caps)
+
+
+_AC_RE = re.compile(
+    r"\bac\b|\ba/c\b|air[\s-]?condition(?:ed|ing|er)?", re.IGNORECASE
+)
+_AC_NEGATED_RE = re.compile(
+    r"\b(?:non[\s-]?ac|without\s+(?:an?\s+)?ac|no\s+ac"
+    r"|non[\s-]?air[\s-]?condition(?:ed)?)\b",
+    re.IGNORECASE,
+)
+
+
+def _wants_ac(question: str) -> bool:
+    """v15 (audit D07): "family accommodation" must NOT trigger the AC
+    filter (whole-word match only), and an explicit "non-AC" request is
+    the opposite preference — never treated as wanting AC."""
+    text = question or ""
+    if _AC_NEGATED_RE.search(text):
+        return False
+    return bool(_AC_RE.search(text))
 
 
 def _within_km(question: str) -> float | None:
@@ -359,6 +400,94 @@ def _restaurant_ceiling(record: dict, per_person: bool) -> float | None:
         return float(cost) if cost is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _enforce_post_merge_constraints(
+    evidence: list[dict[str, Any]],
+    question: str,
+    kind: str,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Hard dietary/price/radius/AC constraints applied to the MERGED
+    result list (static dataset + live OSM). Returns (kept, drop_counts).
+
+    Rules (audit D06/D07):
+      * pure-veg/Jain → only records with pure_veg is True; live/unknown
+        diet never satisfies a strict request;
+      * plain vegetarian → vegetarian is True (unknown ≠ match);
+      * price cap → record ceiling must exist and be ≤ cap (unknown ≠ match);
+      * radius → distance_km must exist and be ≤ radius (hotels without a
+        recorded distance are KEPT here — the separate radius_unverified
+        note discloses that honestly);
+      * AC → amenities must state air conditioning (live/unknown ≠ match).
+    """
+    wants_pure = any(
+        phrase in (question or "").lower()
+        for phrase in ("pure veg", "pure vegetarian", "pureveg", "pure-veg", "jain")
+    )
+    wants_veg = wants_pure or bool(_tokens(question) & {"veg", "vegetarian"})
+    max_price = _max_price_rupees(question)
+    within_km = _within_km(question)
+    wants_ac = kind == "hotel" and _wants_ac(question)
+    if not (wants_pure or wants_veg or max_price is not None
+            or within_km is not None or wants_ac):
+        return evidence, {}
+
+    drops: dict[str, int] = {}
+    kept: list[dict[str, Any]] = []
+    for item in evidence:
+        item_kind = item.get("kind")
+        if kind == "restaurant":
+            target = item_kind in {"restaurant", "poi"}
+        elif kind == "hotel":
+            target = item_kind in {"hotel", "poi"}
+        else:
+            target = False
+        if not target:
+            kept.append(item)
+            continue
+
+        drop: str | None = None
+        if kind == "restaurant" and wants_pure:
+            if item.get("pure_veg") is not True:
+                drop = "diet not verified as pure-veg"
+        elif kind == "restaurant" and wants_veg:
+            if item.get("vegetarian") is not True:
+                drop = "diet not verified as vegetarian"
+
+        if drop is None and max_price is not None:
+            if kind == "restaurant":
+                ceiling = _restaurant_ceiling(
+                    item, "per person" in (question or "").lower()
+                )
+            else:
+                ceiling = _hotel_price_upper(item.get("price_range"))
+            if ceiling is None:
+                drop = "price not verified under the requested cap"
+            elif ceiling > max_price:
+                drop = "price over the requested cap"
+
+        if drop is None and within_km is not None:
+            distance = item.get("distance_km")
+            if distance is not None:
+                try:
+                    if float(distance) > within_km:
+                        drop = "outside the requested radius"
+                except (TypeError, ValueError):
+                    drop = "distance unverified for the requested radius"
+            # hotels without distance: kept + disclosed by radius note
+
+        if drop is None and wants_ac:
+            amenities = [str(a).lower() for a in (item.get("amenities") or [])]
+            if not any(
+                "air condition" in a or a in {"ac", "a/c"} for a in amenities
+            ):
+                drop = "AC not verified"
+
+        if drop:
+            drops[drop] = drops.get(drop, 0) + 1
+        else:
+            kept.append(item)
+    return kept, drops
 
 
 def _select_static(
@@ -445,9 +574,7 @@ def _select_static(
                     kept.append(r)
             selected = kept
 
-    wants_ac = bool(
-        re.search(r"\b(ac|a/c|air[- ]?condition)", q_lower)
-    )
+    wants_ac = _wants_ac(question)
     if selected and kind == "hotel" and wants_ac:
         kept = []
         for r in selected:
@@ -845,6 +972,77 @@ def run(
                     "hint": None,
                 }
             )
+
+    # --- v15 (audit D06/D07): ONE hard-constraint gate AFTER every source
+    # is merged. Live OSM results have no dietary/price/AC verification —
+    # unknown must never satisfy a strict request (the earlier static-only
+    # filter let a mocked unknown-diet restaurant through). ---
+    evidence, constraint_drops = _enforce_post_merge_constraints(
+        evidence, question, kind
+    )
+    # Ground the user's OWN constraint values in evidence so echoing them
+    # back ("under ₹200 within 2 km") validates instead of degrading.
+    applied: list[str] = []
+    q_lower = (question or "").lower()
+    if kind == "restaurant":
+        if any(
+            phrase in q_lower
+            for phrase in ("pure veg", "pure vegetarian", "pureveg", "pure-veg", "jain")
+        ):
+            applied.append("strict pure-veg only (unverified diet excluded)")
+        elif _tokens(question) & {"veg", "vegetarian"}:
+            applied.append("vegetarian only")
+    radius = _within_km(question)
+    if radius is not None and kind in {"restaurant", "hotel"}:
+        applied.append(f"radius ≤ {radius:g} km")
+    price = _max_price_rupees(question)
+    if price is not None:
+        scope = "per person" if kind == "restaurant" and "per person" in q_lower else ""
+        applied.append(f"budget ≤ ₹{price:g} {'(each) per person' if scope else ''}".strip())
+    if kind == "hotel" and _wants_ac(question):
+        applied.append("AC required")
+    if applied:
+        evidence.append(
+            {
+                "source": "accommodation",
+                "kind": "note",
+                "key": "constraints_applied",
+                "error": "Applied your filters: " + "; ".join(applied) + ".",
+                "hint": None,
+            }
+        )
+    if constraint_drops:
+        parts = [
+            f"{count} result(s) excluded — {reason}"
+            for reason, count in sorted(constraint_drops.items())
+            if count
+        ]
+        evidence.append(
+            {
+                "source": "accommodation",
+                "kind": "note",
+                "key": "constraint_exclusions",
+                "error": (
+                    "Applied your hard requirements; " + "; ".join(parts)
+                    + ". Unknown status does not count as a match."
+                ),
+                "hint": None,
+            }
+        )
+    if kind == "hotel" and selected and _wants_occupancy(question):
+        evidence.append(
+            {
+                "source": "accommodation",
+                "kind": "note",
+                "key": "occupancy_unverified",
+                "error": (
+                    "Verified hotel records do not include room capacity / "
+                    "occupancy, so traveller-count requirements could not "
+                    "be confirmed for these hotels."
+                ),
+                "hint": None,
+            }
+        )
 
     # radius constraint on hotels: dataset has no per-hotel distance, so we
     # must NOT pretend the radius was enforced (audit D07 honesty rule)

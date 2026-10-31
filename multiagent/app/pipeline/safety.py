@@ -33,6 +33,17 @@ def _detect_language(message: str) -> str:
 # in `patterns` and always win.
 _GEO_HINT = re.compile(r"\b(near|nearby|nearest|closest|around)\b", re.IGNORECASE)
 
+# v15 (audit D04): "ambulance station near Yadadri" is FACILITY discovery
+# (routes to agents) — not a life-threat. Requires a facility/discovery
+# word AND a geo/discovery word, so "need ambulance near me" (no station/
+# office/number) stays an emergency.
+_FACILITY_DISCOVERY = re.compile(
+    r"\b(station|office|contact(?:\s*number)?|phone\s*number|helpline"
+    r"|address)\b[^.?!]*\b(near|nearby|nearest|closest|around|in|at)\b"
+    r"|\b(near|nearby|nearest|closest)\b[^.?!]*\b(station|office)\b",
+    re.IGNORECASE | re.DOTALL,
+)
+
 
 def _load() -> None:
     global _COMPILED, _GEO_EXEMPT, _REPLY, _REPLIES
@@ -76,6 +87,11 @@ def detect(message: str) -> bool:
 
     _load()
     assert _COMPILED is not None and _GEO_EXEMPT is not None
+
+    # facility discovery wins over generic single-word triggers like
+    # "ambulance" — but only when it really is a find-a-facility phrasing
+    if _FACILITY_DISCOVERY.search(message):
+        return False
 
     if any(pattern.search(message) for pattern in _COMPILED):
         return True
