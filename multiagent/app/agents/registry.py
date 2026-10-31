@@ -72,6 +72,14 @@ def _run_restaurant(subquery: Any, context: dict) -> dict:
     )
 
 
+def _run_discover(subquery: Any, context: dict) -> dict:
+    origin = getattr(subquery, "origin", None) or ""
+    if not origin:
+        # last resort: pull the place out of the question text itself
+        origin = str(subquery.question or "").strip()
+    return _temple.discover(origin, str(subquery.question or ""))
+
+
 def _run_budget(subquery: Any, context: dict) -> dict:
     return _budget.run(
         question=subquery.question,
@@ -87,6 +95,7 @@ AGENT_REGISTRY: dict[str, AgentFn] = {
     "temple_info": _run_temple,
     "travel_route": _run_travel,
     "travel_nearby": _run_travel,
+    "temple_discover": _run_discover,
     "accommodation": _run_accommodation,
     "restaurant": _run_restaurant,
     "budget": _run_budget,

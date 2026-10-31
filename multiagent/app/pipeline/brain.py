@@ -6,6 +6,11 @@ for agent-backed categories.
 """
 from __future__ import annotations
 
+import logging
+import re
+
+logger = logging.getLogger(__name__)
+
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -133,6 +138,17 @@ Rules:
 - recent_history is context: resolve references AND trip endpoints (origin,
   destination, mode, dates) from it. Repeat a previous task only when the
   user refers to it.
+- HARD RULE: every subquery MUST be derived from the CURRENT message
+  (possibly combined with resolved references). NEVER emit a subquery that
+  re-asks a PREVIOUS turn's question just because it appears in
+  recent_history. Anaphoric messages ("compare both", "what about the other
+  one", "and its timings") are RESOLVED into the current question using
+  history — history questions are never copied verbatim into subqueries.
+- temple_discover: use when the user asks WHICH/NEAREST/BEST temples near a
+  place WITHOUT naming a specific temple ("temples near Hyderabad",
+  "nearest temple to Uppal", "best temples for a one-day trip"). Fill
+  `origin` with that place. Never use temple_discover when specific temples
+  are already named.
 - Output ONLY the JSON object matching the schema.
 
 ============================================================
@@ -168,6 +184,12 @@ Message: "tell me about yadadri and where to stay there"
 
 Message: "tell me about yadadri and how to reach there from hyderabad"
 {"language":"en","category":"multi","rewritten_query":"Tell me about Yadadri Temple and how to reach it from Hyderabad.","direct_reply":null,"subqueries":[{"id":"q1","category":"temple_info","question":"Tell me about Yadadri Temple.","entities":[{"mention":"Yadadri","entity_type":"temple"}],"origin":null,"destination":null,"mode":null,"depends_on":[]},{"id":"q2","category":"travel_route","question":"How do I reach Yadadri Temple from Hyderabad?","entities":[],"origin":"Hyderabad","destination":"Yadadri","mode":"driving","depends_on":[]}]}
+
+Message: "compare both and give me the best option"  (history: user "accommodation near by dharmapuri", assistant listed "AmruthaVanam Agrifarm Resort" and "GreenAcres Farmstay Retreat")
+{"language":"en","category":"multi","rewritten_query":"Compare AmruthaVanam Agrifarm Resort and GreenAcres Farmstay Retreat near Dharmapuri and recommend the better option.","direct_reply":null,"subqueries":[{"id":"q1","category":"accommodation","question":"Compare AmruthaVanam Agrifarm Resort and GreenAcres Farmstay Retreat near Dharmapuri - amenities, rating, price and which is the better option for a family.","entities":[{"mention":"Dharmapuri","entity_type":"city"}],"origin":null,"destination":"Dharmapuri","mode":null,"depends_on":[]}]}
+
+Message: "which temples are best near hyderabad for a one-day family trip"
+{"language":"en","category":"temple_discover","rewritten_query":"Which are the nearest best temples to visit from Hyderabad for a one-day family trip?","direct_reply":null,"subqueries":[{"id":"q1","category":"temple_discover","question":"Which temples in our registry are nearest to Hyderabad and suitable for a one-day family trip?","entities":[],"origin":"Hyderabad","destination":null,"mode":"driving","depends_on":[]}]}
 
 Message: "best tourist places near by birla mandir"  (history: "i want to go to birla mandir")
 {"language":"en","category":"travel_nearby","rewritten_query":"What are the best tourist places near Birla Mandir, Hyderabad?","direct_reply":null,"subqueries":[{"id":"q1","category":"travel_nearby","question":"What are the best tourist places near Birla Mandir, Hyderabad?","entities":[{"mention":"Birla Mandir","entity_type":"temple"}],"origin":null,"destination":"Birla Mandir","mode":"driving","depends_on":[]}]}
@@ -223,6 +245,7 @@ class BrainSubquery(BaseModel):
         "temple_info",
         "travel_route",
         "travel_nearby",
+        "temple_discover",
         "accommodation",
         "restaurant",
         "budget",
@@ -245,6 +268,7 @@ class BrainResult(BaseModel):
         "temple_info",
         "travel_route",
         "travel_nearby",
+        "temple_discover",
         "accommodation",
         "restaurant",
         "budget",
@@ -270,8 +294,8 @@ def understand(
         "message": message,
         "recent_history": [
             {
-                "user": str(turn.get("user", ""))[:300],
-                "reply": str(turn.get("reply", ""))[:300],
+                "user": str(turn.get("user", ""))[:500],
+                "reply": str(turn.get("reply", ""))[:500],
             }
             for turn in (history or [])
         ],
@@ -299,7 +323,66 @@ def understand(
         except ValidationError as exc:
             raise LLMUnavailable(f"brain returned invalid output: {exc}") from exc
 
-    return _postprocess(result)
+    result = _postprocess(result)
+    return _drop_stale_subqueries(result, message)
+
+
+_STOPWORDS = {
+    "the", "and", "for", "are", "with", "this", "that", "from", "near",
+    "tell", "about", "what", "which", "who", "when", "how", "why", "you",
+    "your", "please", "give", "show", "have", "any", "can", "could", "would",
+    "should", "will", "them", "they", "their", "there", "here", "into",
+    "over", "under", "between", "its", "was", "were", "been", "but",
+    "not", "yes", "okay", "ok", "well", "just", "also", "then", "than",
+    "our", "out", "get", "got", "let", "us", "one", "two", "more", "most",
+    "some", "all", "each", "other", "very", "much", "many", "like",
+    "only", "still", "again", "now", "where", "need", "want", "did",
+    "does", "doing", "done", "option", "options", "both",
+}
+
+
+def _content_tokens(text: str) -> set[str]:
+    return {
+        word
+        for word in re.findall(r"[a-z0-9]+", (text or "").lower())
+        if len(word) >= 3 and word not in _STOPWORDS
+    }
+
+
+def _drop_stale_subqueries(result: BrainResult, message: str) -> BrainResult:
+    """v17 (live bug): 'compare both' emitted subqueries for PREVIOUS
+    turns' questions (re-asking an old ambulance query). A subquery must
+    share >=1 content token with the current message or its rewrite —
+    otherwise it belongs to history, not to this turn."""
+    if not result.subqueries or result.category in {
+        "greeting", "help_meta", "smalltalk",
+    }:
+        return result
+    keep_tokens = _content_tokens(message) | _content_tokens(
+        result.rewritten_query
+    )
+    if not keep_tokens:
+        return result
+    kept = [
+        sq for sq in result.subqueries
+        if _content_tokens(sq.question) & keep_tokens
+    ]
+    if kept:
+        if len(kept) != len(result.subqueries):
+            dropped = [sq.id for sq in result.subqueries if sq not in kept]
+            logger.warning("brain: dropped stale subqueries %s", dropped)
+            result = result.model_copy(update={"subqueries": kept})
+        return result
+    # NOTHING survived: rebuild one honest subquery from the rewrite
+    logger.warning("brain: every subquery was stale - rebuilding from rewrite")
+    fallback = result.subqueries[0].model_copy(
+        update={
+            "id": "q1",
+            "question": result.rewritten_query or message,
+            "depends_on": [],
+        }
+    )
+    return result.model_copy(update={"subqueries": [fallback]})
 
 
 def _postprocess(result: BrainResult) -> BrainResult:

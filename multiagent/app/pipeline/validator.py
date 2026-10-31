@@ -223,7 +223,7 @@ def render_structured(results: list[dict]) -> str:
                     f"provider status: {item.get('status')}"
                     + (f", selected: {item.get('selected')}" if item.get("selected") else "")
                 )
-            elif kind in {"hotel", "restaurant", "poi"}:
+            elif kind in {"hotel", "restaurant", "poi", "temple_candidate"}:
                 # structured stays (audit C16): print name + the REAL keys
                 # the emitters use — hotels carry `phones`/`map_link`, not
                 # `phone`/`maps_link` (that mismatch hid every contact).
@@ -239,6 +239,10 @@ def render_structured(results: list[dict]) -> str:
                     ("phone", item.get("phone") or item.get("phones")),
                     ("address", item.get("address")),
                     ("distance", item.get("distance_km")),
+                    ("road", item.get("road_km")),
+                    ("road_time_min", item.get("road_minutes")),
+                    ("straight_line", item.get("straight_km")),
+                    ("district", item.get("district")),
                     ("map", item.get("maps_link") or item.get("map_link")
                      or item.get("google_maps_url")),
                     ("website", item.get("website")),

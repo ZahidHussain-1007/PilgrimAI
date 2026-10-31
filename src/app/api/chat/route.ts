@@ -44,6 +44,9 @@ export async function POST(request: Request) {
     const reply = await aiService.generateResponse({
       message: validated.content,
       conversationId,
+      // v17: anonymous sessions keep ONE backend session id so the brain
+      // sees previous turns (conversationId covers signed-in users).
+      sessionId: validated.sessionId,
       userId: user?.id,
       temple: validated.temple,
       language: validated.language,

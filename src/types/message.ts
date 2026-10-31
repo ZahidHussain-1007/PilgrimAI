@@ -8,6 +8,8 @@ export type TripCreatedViewModel = {
 }
 export type Message = {
   id: string
+  /** backend session id echoed for anonymous history continuity */
+  sessionId?: string
   conversationId?: string
   role: "user" | "assistant"
   content?: string

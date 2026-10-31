@@ -88,6 +88,8 @@ export interface TripCreated {
 }
 
 export interface Message {
+  /** backend session id echoed back (anonymous history continuity) */
+  sessionId?: string,
   id: string
   conversationId: string
   userId?: string

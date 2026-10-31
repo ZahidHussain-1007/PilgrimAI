@@ -11,6 +11,8 @@ from __future__ import annotations
 import re
 
 import json
+import logging
+import math
 from pathlib import Path
 from typing import Any
 
@@ -247,6 +249,209 @@ def _dedupe(evidence: list[dict]) -> list[dict]:
         seen.add(key)
         unique.append(item)
     return unique
+
+
+_GEO_INDEX: list[dict] | None = None
+logger = logging.getLogger(__name__)
+
+
+def _haversine_km(
+    a_lat: float, a_lng: float, b_lat: float, b_lng: float
+) -> float:
+    """Straight-line km (discovery pre-rank before OSRM road lookup)."""
+    r = 6371.0
+    p1, p2 = math.radians(a_lat), math.radians(b_lat)
+    dp = math.radians(b_lat - a_lat)
+    dl = math.radians(b_lng - a_lng)
+    h = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return round(2 * r * math.asin(math.sqrt(h)), 2)
+
+
+def _temple_geo_index() -> list[dict]:
+    """Lightweight coordinates index over data/temples/T*.json (23 files).
+    Cached per process; rebuilt if files change is needed -> restart."""
+    global _GEO_INDEX
+    if _GEO_INDEX is not None:
+        return _GEO_INDEX
+    entries: list[dict] = []
+    for path in sorted(_TEMPLE_DIR.glob("T*.json")):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001 - skip broken file
+            continue
+        location = record.get("location") or {}
+        try:
+            lat = float(location.get("latitude"))
+            lng = float(location.get("longitude"))
+        except (TypeError, ValueError):
+            continue
+        entries.append(
+            {
+                "temple_id": str(
+                    record.get("temple_id") or record.get("id") or ""
+                ).strip(),
+                "name": str(
+                    record.get("temple_name")
+                    or record.get("name")
+                    or path.stem
+                ).strip(),
+                "district": str(location.get("district") or "").strip(),
+                "lat": lat,
+                "lng": lng,
+            }
+        )
+    _GEO_INDEX = [e for e in entries if e["temple_id"]]
+    return _GEO_INDEX
+
+
+def _fact_value(result: Any, key: str) -> float | None:
+    for fact in getattr(result, "facts", None) or []:
+        if getattr(fact, "key", None) == key:
+            try:
+                return float(getattr(fact, "value", None))
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def discover(
+    origin: str,
+    question: str = "",
+    *,
+    limit: int = 6,
+    radius_km: float = 150.0,
+) -> dict:
+    """v17 — temple_discover capability: WHICH temples are nearest a place,
+    using OUR registry coordinates (23 temples) + OSRM road routes with an
+    honest straight-line fallback. No LLM memory, no hardcoded distances."""
+    base_status: dict = {"question": question}
+
+    if not str(origin or "").strip():
+        return {
+            **base_status,
+            "status": "NEEDS_CLARIFICATION",
+            "query": "Which city or area are you starting from?",
+            "evidence": [],
+        }
+
+    from app.travel.resolver import resolve_place
+    from app.travel.providers.route_chain import route_with_fallbacks
+    from app.travel.schemas import Coordinate
+
+    try:
+        place = resolve_place(origin)
+    except Exception as exc:  # noqa: BLE001 - resolver/provider failure
+        return {
+            **base_status,
+            "status": "ERROR",
+            "error": f"origin_unresolvable: {type(exc).__name__}: {exc}"[:160],
+            "evidence": [],
+        }
+    if place is None or place.coordinates is None:
+        return {
+            **base_status,
+            "status": "ERROR",
+            "error": "origin_unresolvable: no coordinates",
+            "evidence": [],
+        }
+
+    origin_coord = Coordinate(
+        latitude=place.coordinates.latitude,
+        longitude=place.coordinates.longitude,
+    )
+    ranked: list[tuple[float, dict]] = []
+    for entry in _temple_geo_index():
+        straight = _haversine_km(
+            origin_coord.latitude,
+            origin_coord.longitude,
+            entry["lat"],
+            entry["lng"],
+        )
+        if straight <= radius_km:
+            ranked.append((straight, entry))
+    ranked.sort(key=lambda pair: pair[0])
+
+    evidence: list[dict] = [
+        {
+            "source": "place_resolution",
+            "kind": "place",
+            "role": "origin",
+            "name": place.display_name,
+            "latitude": origin_coord.latitude,
+            "longitude": origin_coord.longitude,
+            "resolved_via": place.source,
+        }
+    ]
+
+    road_used = 0
+    for straight, entry in ranked[:limit]:
+        road_km: float | None = None
+        road_min: float | None = None
+        road_source = "straight_line"
+        try:
+            route = route_with_fallbacks(
+                origin_coord,
+                Coordinate(latitude=entry["lat"], longitude=entry["lng"]),
+                mode="driving",
+            )
+            road_km = _fact_value(route, "distance")
+            road_min = _fact_value(route, "duration")
+            provider = (route.metadata or {}).get("selected_provider")
+            if provider == "osrm" and road_km is not None:
+                road_source = "road_osrm"
+                road_used += 1
+        except Exception as exc:  # noqa: BLE001 - honest fallback
+            logger.warning("discovery route failed for %s: %s", entry["temple_id"], exc)
+        evidence.append(
+            {
+                "source": "temple_registry",
+                "kind": "temple_candidate",
+                "source_tier": "temple-dataset",
+                "temple_id": entry["temple_id"],
+                "name": entry["name"],
+                "district": entry["district"] or None,
+                "straight_km": straight,
+                "road_km": road_km,
+                "road_minutes": road_min,
+                "distance_source": road_source,
+                "error": None,
+            }
+        )
+
+    if not evidence[1:]:
+        evidence.append(
+            {
+                "source": "temple_registry",
+                "kind": "note",
+                "key": "discovery_empty",
+                "error": (
+                    f"No registry temples within {radius_km:g} km of "
+                    f"{place.display_name}. Our verified registry covers "
+                    f"{len(_temple_geo_index())} temples in Telangana."
+                ),
+                "hint": None,
+            }
+        )
+        return {**base_status, "status": "COMPLETED", "evidence": evidence}
+
+    evidence.append(
+        {
+            "source": "temple_registry",
+            "kind": "note",
+            "key": "discovery_method",
+            "error": (
+                f"Ranked from our {len(_temple_geo_index())}-temple registry. "
+                + (
+                    "Distances are road distances (OSRM)."
+                    if road_used
+                    else "Road routing was unavailable — distances shown "
+                    "are straight-line estimates."
+                )
+            ),
+            "hint": None,
+        }
+    )
+    return {**base_status, "status": "COMPLETED", "evidence": evidence[: limit + 3]}
 
 
 def run(question: str, temple_ids: list[str] | None = None) -> dict:

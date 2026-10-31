@@ -108,7 +108,7 @@ def chat(request: ChatRequest) -> dict:
 
     # ---- STAGE 1: brain (LLM #1) ----
     try:
-        brain = understand(message=message, history=history[-3:])
+        brain = understand(message=message, history=history[-6:])
     except LLMUnavailable as exc:
         _persist(
             session_id,

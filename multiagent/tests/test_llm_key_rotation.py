@@ -120,3 +120,40 @@ def test_empty_response_fails_over():
     _BEHAVIOUR["k1"] = "empty"
     assert _call() == {"ok": True}
     assert _USED[:2] == ["k1", "k2"]
+
+
+def test_six_key_mixed_pool_rotates(monkeypatch):
+    """3 Groq + OpenRouter + Google + a 4th Groq key = one pool (v16.1)."""
+    monkeypatch.setattr(llm_mod.settings, "groq_api_key_4", "k4")
+    monkeypatch.setattr(llm_mod.settings, "openaikey", "or1")
+    monkeypatch.setattr(llm_mod.settings, "google_ai_stdio", "g1")
+    labels = [e.label for e in llm_mod._configured_keys()]
+    assert labels == ["groq_1", "groq_2", "groq_3", "groq_4", "openrouter", "google"]
+
+    # route compat entries through a fake transport
+    compat_used: list[str] = []
+
+    def fake_compat(entry, body):
+        compat_used.append(entry.label)
+        return '{"ok": true}'
+
+    monkeypatch.setattr(llm_mod, "_openai_compat_call", fake_compat)
+
+    # rotate across SIX keys: start advances one per call
+    _call(); _call(); _call(); _call(); _call(); _call(); _call()
+    # starts: groq1, groq2, groq3, groq4, openrouter, google, groq1
+    assert _USED == ["k1", "k2", "k3", "k4", "k1"], _USED
+    assert compat_used == ["openrouter", "google"], compat_used
+
+
+def test_compat_key_failure_fails_over_to_groq(monkeypatch):
+    monkeypatch.setattr(llm_mod.settings, "openaikey", "or1")
+    llm_mod._rotation_offset = 4          # next start = openrouter
+
+    def fake_compat(entry, body):
+        raise RuntimeError("provider down")
+
+    monkeypatch.setattr(llm_mod, "_openai_compat_call", fake_compat)
+    result = _call()
+    assert result == {"ok": True}
+    assert _USED == ["k1"], _USED         # failed openrouter -> groq_1

@@ -8,6 +8,14 @@ class Settings(BaseSettings):
     groq_api_key_1: str | None = None
     groq_api_key_2: str | None = None
     groq_api_key_3: str | None = None
+    groq_api_key_4: str | None = None
+    groq_api_key_5: str | None = None
+    groq_api_key_6: str | None = None
+    # non-Groq providers join the same round-robin pool (v16.1)
+    openaikey: str | None = None          # OpenRouter key (sk-or-…)
+    google_ai_stdio: str | None = None    # Gemini API key
+    openrouter_model: str = "openai/gpt-oss-120b"
+    google_model: str = "gemini-2.5-flash"
     groq_model: str = "openai/gpt-oss-120b"
 
     # --- Session store ---

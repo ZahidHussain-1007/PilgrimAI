@@ -5,6 +5,8 @@ import type { Message, MessageSource, TripCreated } from "../../types/domain/mod
 export interface GenerateOptions {
   message: string
   conversationId?: string
+  /** stable backend session for anonymous users (history continuity) */
+  sessionId?: string
   userId?: string
   temple?: string
   language?: string
@@ -76,7 +78,9 @@ export class AiService {
     try {
       const response = await this.client.sendChat(
         message,
-        conversationId !== "default" ? conversationId : undefined,
+        conversationId !== "default"
+          ? conversationId
+          : options.sessionId || undefined,
       )
 
       return this.mapMultiAgentResponse(response, {
@@ -182,6 +186,8 @@ export class AiService {
     return {
       id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
       conversationId: context.conversationId,
+      // echo the backend session so anonymous clients can keep THEIR history
+      sessionId: response.session_id,
       userId: context.userId,
       role: "assistant",
       content: response.reply,

@@ -4,8 +4,10 @@ from __future__ import annotations
 import json
 import logging
 import threading
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Callable
 
+import httpx
 from groq import Groq
 
 from app.core.config import settings
@@ -29,6 +31,9 @@ _rotation_lock = threading.Lock()
 
 def _is_auth_failure(exc: Exception) -> bool:
     if getattr(exc, "status_code", None) == 401:
+        return True
+    response = getattr(exc, "response", None)
+    if response is not None and getattr(response, "status_code", None) == 401:
         return True
     return type(exc).__name__ == "AuthenticationError"
 
@@ -66,30 +71,117 @@ def strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
     return schema
 
 
-def _configured_keys() -> list[str]:
-    return [
-        key.strip()
-        for key in (
-            settings.groq_api_key_1,
-            settings.groq_api_key_2,
-            settings.groq_api_key_3,
+@dataclass(frozen=True)
+class KeyEntry:
+    """One key in the shared round-robin pool (v16.1: ANY provider)."""
+
+    label: str            # e.g. "groq_1", "openrouter", "google" — never the secret
+    kind: str             # "groq" | "openai_compat"
+    api_key: str
+    model: str
+    base_url: str | None = None
+
+
+def _configured_keys() -> list[KeyEntry]:
+    """Every key found in multiagent/.env joins ONE pool:
+    GROQ_API_KEY_1..6 (any count), openaikey (OpenRouter),
+    google_ai_stdio (Gemini). Round-robin spans all of them."""
+    entries: list[KeyEntry] = []
+    for index in range(1, 7):
+        key = getattr(settings, f"groq_api_key_{index}", None)
+        if key and key.strip():
+            entries.append(
+                KeyEntry(
+                    label=f"groq_{index}",
+                    kind="groq",
+                    api_key=key.strip(),
+                    model=settings.groq_model,
+                )
+            )
+    if settings.openaikey and settings.openaikey.strip():
+        entries.append(
+            KeyEntry(
+                label="openrouter",
+                kind="openai_compat",
+                api_key=settings.openaikey.strip(),
+                model=settings.openrouter_model,
+                base_url="https://openrouter.ai/api/v1",
+            )
         )
-        if key and key.strip()
-    ]
+    if settings.google_ai_stdio and settings.google_ai_stdio.strip():
+        entries.append(
+            KeyEntry(
+                label="google",
+                kind="openai_compat",
+                api_key=settings.google_ai_stdio.strip(),
+                model=settings.google_model,
+                base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+            )
+        )
+    return entries
 
 
-def _clients() -> list[Groq]:
+def _pool() -> list[KeyEntry]:
     """Round-robin order starting at the shared cursor; revoked (401) keys
     are dropped. Advances the cursor so the NEXT call starts elsewhere."""
     global _rotation_offset
-    keys = [k for k in _configured_keys() if k not in _revoked_keys]
+    keys = [e for e in _configured_keys() if e.api_key not in _revoked_keys]
     if not keys:
         return []
     with _rotation_lock:
         start = _rotation_offset % len(keys)
         _rotation_offset = (start + 1) % len(keys)
-    ordered = keys[start:] + keys[:start]
-    return [Groq(api_key=key) for key in ordered]
+    return keys[start:] + keys[:start]
+
+
+def _openai_compat_call(entry: KeyEntry, body: dict[str, Any]) -> str:
+    """POST /chat/completions for OpenRouter / Gemini (OpenAI-compatible).
+    If the provider rejects json_schema (400/422), retry once with
+    json_object + the schema inlined into the system prompt."""
+    url = f"{entry.base_url.rstrip('/')}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {entry.api_key}",
+        "Content-Type": "application/json",
+    }
+
+    def _post(payload: dict[str, Any]) -> httpx.Response:
+        return httpx.post(url, headers=headers, json=payload, timeout=90.0)
+
+    response = _post(body)
+    if response.status_code in (400, 422) and "response_format" in body:
+        messages = [
+            m for m in body.get("messages", []) if m.get("role") == "system"
+        ]
+        schema_hint = json.dumps(
+            body.get("response_format", {}), ensure_ascii=False
+        )
+        if messages:
+            messages = [
+                {**messages[0],
+                 "content": str(messages[0].get("content", ""))
+                 + "\n\nReturn ONLY a JSON object satisfying: " + schema_hint}
+            ] + [m for m in body.get("messages", []) if m.get("role") != "system"]
+        fallback = {
+            **body,
+            "messages": messages,
+            "response_format": {"type": "json_object"},
+        }
+        response = _post(fallback)
+    if response.status_code >= 400:
+        error = httpx.HTTPStatusError(
+            f"{entry.label} HTTP {response.status_code}",
+            request=response.request,
+            response=response,
+        )
+        raise error
+    data = response.json()
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError(f"{entry.label} returned a malformed payload") from exc
+    if not content:
+        raise RuntimeError(f"{entry.label} returned an empty response")
+    return str(content)
 
 
 def complete_json(
@@ -102,45 +194,69 @@ def complete_json(
 ) -> dict[str, Any]:
     """One strict-JSON completion. Rotates keys on failure.
     Raises LLMUnavailable when no key works."""
-    clients = _clients()
+    pool = _pool()
 
-    if not clients:
+    if not pool:
         if _revoked_keys:
             raise LLMUnavailable(
-                "all Groq keys were revoked after 401 auth failures - "
-                "replace GROQ_API_KEY_1/2/3 in multiagent/.env"
+                "all LLM keys were revoked after 401 auth failures - "
+                "replace the keys in multiagent/.env"
             )
-        raise LLMUnavailable("no Groq API keys configured")
+        raise LLMUnavailable("no LLM API keys configured")
 
     body = strict_schema(schema)
     last_error: Exception | None = None
+    wanted_model = model  # per-call override only applies to Groq entries
 
-    for index, client in enumerate(clients, start=1):
+    for index, entry in enumerate(pool, start=1):
         try:
-            response = client.chat.completions.create(
-                model=model or settings.groq_model,
-                messages=[
-                    {"role": "system", "content": system},
+            if entry.kind == "groq":
+                client = Groq(api_key=entry.api_key)
+                response = client.chat.completions.create(
+                    model=wanted_model or entry.model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {
+                            "role": "user",
+                            "content": json.dumps(payload, ensure_ascii=False),
+                        },
+                    ],
+                    temperature=0,
+                    response_format={
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": schema_name,
+                            "strict": True,
+                            "schema": body,
+                        },
+                    },
+                )
+                content = response.choices[0].message.content
+                if not content:
+                    raise RuntimeError("LLM returned an empty response")
+            else:
+                content = _openai_compat_call(
+                    entry,
                     {
-                        "role": "user",
-                        "content": json.dumps(payload, ensure_ascii=False),
+                        "model": entry.model,
+                        "messages": [
+                            {"role": "system", "content": system},
+                            {
+                                "role": "user",
+                                "content": json.dumps(payload, ensure_ascii=False),
+                            },
+                        ],
+                        "temperature": 0,
+                        "response_format": {
+                            "type": "json_schema",
+                            "json_schema": {
+                                "name": schema_name,
+                                "strict": True,
+                                "schema": body,
+                            },
+                        },
                     },
-                ],
-                temperature=0,
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": schema_name,
-                        "strict": True,
-                        "schema": body,
-                    },
-                },
-            )
-
-            content = response.choices[0].message.content
-
-            if not content:
-                raise RuntimeError("LLM returned an empty response")
+                )
 
             parsed = json.loads(content)
 
@@ -152,20 +268,18 @@ def complete_json(
         except Exception as exc:  # noqa: BLE001 - rotate keys on any failure
             last_error = exc
             logger.warning(
-                "LLM attempt %d failed: %s: %s",
+                "LLM attempt %d (%s) failed: %s: %s",
                 index,
+                entry.label,
                 type(exc).__name__,
                 exc,
             )
             if _is_auth_failure(exc):
                 # Dead key: stop paying its failed round-trip on every call.
-                try:
-                    _revoked_keys.add(str(client.api_key))
-                except Exception:  # noqa: BLE001 - best effort
-                    pass
-            if index < len(clients):
+                _revoked_keys.add(entry.api_key)
+            if index < len(pool):
                 continue
 
     raise LLMUnavailable(
-        f"all configured Groq keys failed: {last_error}"
+        f"all configured LLM keys failed: {last_error}"
     ) from last_error

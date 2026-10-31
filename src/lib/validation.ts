@@ -254,12 +254,15 @@ export function validateCreateMessageInput(data: unknown) {
   const raw = data as Record<string, unknown>
   const content = validateRequiredString(raw.content || raw.message, "Message content", 1, 5000)
   const conversationId = validateOptionalString(raw.conversationId, "Conversation ID", 100)
+  // v17: stable ANONYMOUS backend session (history continuity across reloads)
+  const sessionId = validateOptionalString(raw.sessionId, "Session ID", 100)
   const temple = validateOptionalString(raw.temple, "Temple", 100)
   const language = validateOptionalString(raw.language, "Language", 20) || "en"
 
   return {
     content,
     conversationId,
+    sessionId,
     temple,
     language,
   }

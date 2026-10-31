@@ -46,7 +46,52 @@ def _resolve_temple_ids(subquery: Any) -> list[str]:
     return sorted(ids)
 
 
-def _run_one(subquery: Any) -> dict:
+def _dep_harvest(results: dict[str, dict], subquery: Any) -> tuple[dict, str | None]:
+    """v17 (audit A02): a dependency's OUTPUT becomes this task's INPUT.
+    Returns (context_additions, block_reason|None).
+
+    Bound so far (deterministic, no LLM):
+      * temple ids proven by predecessor evidence  -> context["temple_ids"]
+      * resolved origin/place names                -> subquery origin/dest
+      * a FAILED predecessor                       -> block this task
+        (never run budget/route blindly without the selection it needs)
+    """
+    temple_ids: set[str] = set()
+    origin_hint: str | None = None
+    dest_hint: str | None = None
+    for dep_id in subquery.depends_on or []:
+        dep = results.get(dep_id)
+        if dep is None:
+            continue  # ordering issue only - cycle guard handles it
+        if dep.get("status") in {"ERROR", "FAILED", "BLOCKED"}:
+            return {}, (
+                f"prerequisite step '{dep_id}' failed "
+                f"({dep.get('error') or dep.get('status')}), so this step "
+                "was not run"
+            )
+        for item in dep.get("evidence") or []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("temple_id"):
+                temple_ids.add(str(item["temple_id"]))
+            if item.get("kind") == "place" and item.get("name"):
+                name = str(item["name"])
+                if item.get("role") == "origin":
+                    origin_hint = origin_hint or name
+                else:
+                    dest_hint = dest_hint or name
+            for key in ("temple_name", "name"):
+                value = item.get(key)
+                if (
+                    value
+                    and item.get("source") in {"temple_rag", "temple_dataset"}
+                ):
+                    dest_hint = dest_hint or str(value)
+    return {"temple_ids": sorted(temple_ids), "origin_hint": origin_hint,
+            "dest_hint": dest_hint}, None
+
+
+def _run_one(subquery: Any, dep_context: dict | None = None) -> dict:
     base = {
         "step_id": subquery.id,
         "category": subquery.category,
@@ -56,9 +101,23 @@ def _run_one(subquery: Any) -> dict:
     try:
         agent = get_agent(subquery.category)
 
-        context: dict = {}
-        if subquery.category in REGISTRY_RESOLVED_CATEGORIES:
-            context["temple_ids"] = _resolve_temple_ids(subquery)
+        context: dict = dict(dep_context or {})
+        resolved_here = (
+            _resolve_temple_ids(subquery) if subquery.category
+            in REGISTRY_RESOLVED_CATEGORIES else []
+        )
+        if resolved_here:
+            merged = set(context.get("temple_ids") or []) | set(resolved_here)
+            context["temple_ids"] = sorted(merged)
+
+        # bind inherited endpoints when the model left them null
+        bound = {}
+        if not subquery.origin and context.get("origin_hint"):
+            bound["origin"] = context["origin_hint"]
+        if not subquery.destination and context.get("dest_hint"):
+            bound["destination"] = context["dest_hint"]
+        if bound:
+            subquery = subquery.model_copy(update=bound)
 
         outcome = agent(subquery, context)
 
@@ -94,6 +153,8 @@ def _run_one(subquery: Any) -> dict:
 
 def execute(subqueries: list) -> list[dict]:
     """Run subqueries in dependency layers; parallel within a layer.
+    v17: predecessor outputs are BOUND into each task's inputs, and a
+    failed prerequisite produces a BLOCKED step instead of a blind run.
     Returns results in the original subquery order."""
     results: dict[str, dict] = {}
     pending = list(subqueries)
@@ -102,6 +163,35 @@ def execute(subqueries: list) -> list[dict]:
     while pending:
         safety_counter += 1
         if safety_counter > 100:  # pathological guard
+            break
+
+        # 1) tasks whose prerequisites FAILED -> blocked, not executed
+        blocked_now = [
+            sq for sq in pending
+            if any(
+                dep in results
+                and results[dep].get("status") in {"ERROR", "FAILED", "BLOCKED"}
+                for dep in sq.depends_on
+            )
+            and all(dep in results for dep in sq.depends_on)
+        ]
+        for sq in blocked_now:
+            failed = [
+                dep for dep in sq.depends_on
+                if results.get(dep, {}).get("status")
+                in {"ERROR", "FAILED", "BLOCKED"}
+            ]
+            results[sq.id] = {
+                "step_id": sq.id,
+                "category": sq.category,
+                "question": sq.question,
+                "status": "BLOCKED",
+                "error": "prerequisite_failed:" + ",".join(failed),
+                "evidence": [],
+            }
+            logger.warning("subquery %s blocked by %s", sq.id, failed)
+        pending = [sq for sq in pending if sq.id not in results]
+        if not pending:
             break
 
         ready = [
@@ -113,10 +203,29 @@ def execute(subqueries: list) -> list[dict]:
             # dependency cycle or unknown id - run the rest anyway
             ready = [pending[0]]
 
+        # 2) bind each ready task's predecessor outputs into its context
+        prepared: list[tuple[Any, dict]] = []
+        for sq in ready:
+            dep_context, block_reason = _dep_harvest(results, sq)
+            if block_reason:
+                results[sq.id] = {
+                    "step_id": sq.id,
+                    "category": sq.category,
+                    "question": sq.question,
+                    "status": "BLOCKED",
+                    "error": block_reason,
+                    "evidence": [],
+                }
+                prepared = prepared  # not scheduled
+            else:
+                prepared.append((sq, dep_context))
+
         with ThreadPoolExecutor(
-            max_workers=min(4, max(1, len(ready)))
+            max_workers=min(4, max(1, len(prepared) or 1))
         ) as pool:
-            futures = {pool.submit(_run_one, sq): sq for sq in ready}
+            futures = {
+                pool.submit(_run_one, sq, ctx): sq for sq, ctx in prepared
+            }
             for future, sq in futures.items():
                 try:
                     results[sq.id] = future.result()
