@@ -8,6 +8,8 @@ Contract:
 """
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from app.services import llm as llm_mod
@@ -66,10 +68,19 @@ def _reset(monkeypatch):
     llm_mod._revoked_keys.clear()
     llm_mod._rotation_offset = 0
     monkeypatch.setattr(llm_mod, "Groq", FakeGroq)
+    # v18.1: hermetic — a tester's real .env (extra groq keys, openaikey,
+    # google_ai_stdio) must not change what the pool looks like here.
     monkeypatch.setattr(llm_mod.settings, "groq_api_key_1", "k1")
     monkeypatch.setattr(llm_mod.settings, "groq_api_key_2", "k2")
     monkeypatch.setattr(llm_mod.settings, "groq_api_key_3", "k3")
+    monkeypatch.setattr(llm_mod.settings, "groq_api_key_4", None)
+    monkeypatch.setattr(llm_mod.settings, "groq_api_key_5", None)
+    monkeypatch.setattr(llm_mod.settings, "groq_api_key_6", None)
+    monkeypatch.setattr(llm_mod.settings, "openaikey", None)
+    monkeypatch.setattr(llm_mod.settings, "google_ai_stdio", None)
+    llm_mod._provider_cooldown.clear()
     yield
+    llm_mod._provider_cooldown.clear()
 
 
 def _call():
@@ -157,3 +168,67 @@ def test_compat_key_failure_fails_over_to_groq(monkeypatch):
     result = _call()
     assert result == {"ok": True}
     assert _USED == ["k1"], _USED         # failed openrouter -> groq_1
+
+
+# --------------------------------------------- v18.1 provider cooldown
+def _compat_pipeline(monkeypatch, used: list[str]):
+    def fake_compat(entry, body):
+        used.append(entry.label)
+        return '{"ok": true}'
+
+    monkeypatch.setattr(llm_mod, "_openai_compat_call", fake_compat)
+
+
+def test_rate_limit_jumps_to_next_provider_not_sibling_keys(monkeypatch):
+    """Groq 429 = org-wide quota — groq_2/groq_3 share the SAME tank, so
+    the pool must jump straight to OpenRouter instead of re-failing."""
+    monkeypatch.setattr(llm_mod.settings, "openaikey", "or1")
+    compat_used: list[str] = []
+    _compat_pipeline(monkeypatch, compat_used)
+
+    _BEHAVIOUR["k1"] = Fake429("rate limit reached")
+    result = _call()
+    assert result == {"ok": True}
+    # groq_1 failed, sibling groq_2 was SKIPPED, OpenRouter served it
+    assert _USED == ["k1"], _USED
+    assert compat_used == ["openrouter"], compat_used
+
+
+def test_cooldown_filters_groq_from_pool_until_window_expires(monkeypatch):
+    monkeypatch.setattr(llm_mod.settings, "openaikey", "or1")
+    compat_used: list[str] = []
+    _compat_pipeline(monkeypatch, compat_used)
+
+    _BEHAVIOUR["k1"] = Fake429("rate limit reached")
+    _call()  # sets groq cooldown
+    assert "groq" in llm_mod._provider_cooldown
+
+    # during cooldown: NO groq attempt at all, compat serves every call
+    _USED.clear(); compat_used.clear()
+    _call(); _call()
+    assert [u for u in _USED if u.startswith("k")] == [], _USED
+    assert compat_used == ["openrouter", "openrouter"]
+
+    # window expires (10 min): groq rejoins the rotation
+    for pk in list(llm_mod._provider_cooldown):
+        llm_mod._provider_cooldown[pk] = time.monotonic() - 1
+    _BEHAVIOUR["k1"] = "ok"
+    _USED.clear(); compat_used.clear()
+    _call()
+    assert any(u.startswith("k") for u in _USED), _USED
+
+
+def test_groq_only_pool_still_tries_siblings(monkeypatch):
+    """No other provider configured → sibling keys MAY come from a second
+    org, so they must still be tried (existing failover contract)."""
+    _BEHAVIOUR["k1"] = Fake429("rate limit reached")
+    result = _call()
+    assert result == {"ok": True}
+    assert _USED[:2] == ["k1", "k2"], _USED
+
+
+def test_non_rate_errors_do_not_trigger_cooldown():
+    _BEHAVIOUR["k1"] = RuntimeError("connection reset")
+    assert _call() == {"ok": True}
+    assert _USED[:2] == ["k1", "k2"]
+    assert "groq" not in llm_mod._provider_cooldown

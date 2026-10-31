@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -27,6 +28,31 @@ _revoked_keys: set[str] = set()
 # key fails over to the next one.
 _rotation_offset = 0
 _rotation_lock = threading.Lock()
+
+# v18.1: rate limits are PER PROVIDER (Groq = per ORGANIZATION — every
+# GROQ_API_KEY_* in one account shares a single tokens/day tank, so
+# sibling keys are GUARANTEED to fail together). After a 429 we cool the
+# whole provider down instead of hammering its siblings on every request.
+_provider_cooldown: dict[str, float] = {}
+_COOLDOWN_SECONDS = 600.0
+
+
+def _provider_key(entry: KeyEntry) -> str:
+    if entry.kind == "groq":
+        return "groq"
+    return entry.base_url or entry.label
+
+
+def _is_rate_limit(exc: Exception) -> bool:
+    if getattr(exc, "status_code", None) == 429:
+        return True
+    response = getattr(exc, "response", None)
+    if response is not None and getattr(response, "status_code", None) == 429:
+        return True
+    if type(exc).__name__ == "RateLimitError":
+        return True
+    text = str(exc).lower()
+    return "rate limit" in text or "rate_limit" in text
 
 
 def _is_auth_failure(exc: Exception) -> bool:
@@ -128,6 +154,14 @@ def _pool() -> list[KeyEntry]:
     keys = [e for e in _configured_keys() if e.api_key not in _revoked_keys]
     if not keys:
         return []
+    now = time.monotonic()
+    for provider in [pk for pk, until in _provider_cooldown.items() if until <= now]:
+        _provider_cooldown.pop(provider, None)
+    fresh = [
+        e for e in keys if _provider_key(e) not in _provider_cooldown
+    ]
+    # never go empty while everything is cooling — better to try than 503
+    keys = fresh or keys
     with _rotation_lock:
         start = _rotation_offset % len(keys)
         _rotation_offset = (start + 1) % len(keys)
@@ -209,6 +243,20 @@ def complete_json(
     wanted_model = model  # per-call override only applies to Groq entries
 
     for index, entry in enumerate(pool, start=1):
+        provider = _provider_key(entry)
+        if provider in _provider_cooldown:
+            other_provider_left = any(
+                _provider_key(other) != provider
+                and _provider_key(other) not in _provider_cooldown
+                for other in pool[index:]
+            )
+            if other_provider_left:
+                logger.info(
+                    "LLM attempt %d (%s) skipped: %s cooling down after "
+                    "rate limit (limits are org/provider-wide)",
+                    index, entry.label, provider,
+                )
+                continue
         try:
             if entry.kind == "groq":
                 client = Groq(api_key=entry.api_key)
@@ -277,6 +325,15 @@ def complete_json(
             if _is_auth_failure(exc):
                 # Dead key: stop paying its failed round-trip on every call.
                 _revoked_keys.add(entry.api_key)
+            if _is_rate_limit(exc) and provider not in _provider_cooldown:
+                _provider_cooldown[provider] = (
+                    time.monotonic() + _COOLDOWN_SECONDS
+                )
+                logger.warning(
+                    "provider %s rate-limited — cooling it down for %ds "
+                    "instead of hammering sibling keys (same-org quota)",
+                    provider, int(_COOLDOWN_SECONDS),
+                )
             if index < len(pool):
                 continue
 
