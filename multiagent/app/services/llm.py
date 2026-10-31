@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from typing import Any
 
 from groq import Groq
@@ -18,6 +19,12 @@ class LLMUnavailable(RuntimeError):
 
 # Keys that answered 401 are dead for this process: never retry them.
 _revoked_keys: set[str] = set()
+
+# Round-robin cursor (v16): every incoming call starts at the NEXT key so
+# load spreads key1 -> key2 -> key3 -> key1 ...; within one call, a failed
+# key fails over to the next one.
+_rotation_offset = 0
+_rotation_lock = threading.Lock()
 
 
 def _is_auth_failure(exc: Exception) -> bool:
@@ -59,13 +66,30 @@ def strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
     return schema
 
 
-def _clients() -> list[Groq]:
-    keys = [
+def _configured_keys() -> list[str]:
+    return [
         key.strip()
-        for key in (settings.groq_api_key_1, settings.groq_api_key_2)
+        for key in (
+            settings.groq_api_key_1,
+            settings.groq_api_key_2,
+            settings.groq_api_key_3,
+        )
         if key and key.strip()
     ]
-    return [Groq(api_key=key) for key in keys if key not in _revoked_keys]
+
+
+def _clients() -> list[Groq]:
+    """Round-robin order starting at the shared cursor; revoked (401) keys
+    are dropped. Advances the cursor so the NEXT call starts elsewhere."""
+    global _rotation_offset
+    keys = [k for k in _configured_keys() if k not in _revoked_keys]
+    if not keys:
+        return []
+    with _rotation_lock:
+        start = _rotation_offset % len(keys)
+        _rotation_offset = (start + 1) % len(keys)
+    ordered = keys[start:] + keys[:start]
+    return [Groq(api_key=key) for key in ordered]
 
 
 def complete_json(
@@ -84,7 +108,7 @@ def complete_json(
         if _revoked_keys:
             raise LLMUnavailable(
                 "all Groq keys were revoked after 401 auth failures - "
-                "replace GROQ_API_KEY_1/GROQ_API_KEY_2 in multiagent/.env"
+                "replace GROQ_API_KEY_1/2/3 in multiagent/.env"
             )
         raise LLMUnavailable("no Groq API keys configured")
 
@@ -128,7 +152,7 @@ def complete_json(
         except Exception as exc:  # noqa: BLE001 - rotate keys on any failure
             last_error = exc
             logger.warning(
-                "LLM key %d failed: %s: %s",
+                "LLM attempt %d failed: %s: %s",
                 index,
                 type(exc).__name__,
                 exc,

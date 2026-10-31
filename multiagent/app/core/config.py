@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     # --- LLM ---
     groq_api_key_1: str | None = None
     groq_api_key_2: str | None = None
+    groq_api_key_3: str | None = None
     groq_model: str = "openai/gpt-oss-120b"
 
     # --- Session store ---
