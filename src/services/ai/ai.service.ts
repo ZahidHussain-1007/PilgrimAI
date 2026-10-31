@@ -1,3 +1,4 @@
+import { deriveFollowUps } from "../../lib/followUps"
 import { multiAgentClient, type MultiAgentClient, type MultiAgentChatResponse, type MultiAgentEvidenceItem } from "./multiagent.client"
 import { researchService, type TempleInfo } from "../research/research.service"
 import type { Message, MessageSource, TripCreated } from "../../types/domain/models"
@@ -136,6 +137,9 @@ export class AiService {
       .slice(0, 3)
       .map((item) => item.trim())
 
+    // v18 P0-4: entity-specific next steps before any canned list
+    const derivedFollowUps = deriveFollowUps(response.evidence)
+
     if (response.clarification) {
       if (backendFollowUps.length > 0) {
         followUpQuestions.push(...backendFollowUps)
@@ -144,6 +148,8 @@ export class AiService {
       }
     } else if (backendFollowUps.length > 0) {
       followUpQuestions.push(...backendFollowUps)
+    } else if (derivedFollowUps.length > 0) {
+      followUpQuestions.push(...derivedFollowUps)
     } else {
       switch (response.category) {
           case "temple_info":

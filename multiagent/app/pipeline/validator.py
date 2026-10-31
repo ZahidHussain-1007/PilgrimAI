@@ -95,17 +95,59 @@ def _evidence_text(results: Any) -> str:
     return text
 
 
+_ROUND_LABEL_RE = re.compile(
+    r"(?:≈|≈|~|approx\.?|about|around|roughly)\s*$", re.IGNORECASE
+)
+
+
+def _corpus_floats(text: str) -> list[float]:
+    values: list[float] = []
+    for match in _NUMBER_RE.finditer(_strip_thousands(text)):
+        try:
+            values.append(float(match.group(0)))
+        except ValueError:  # pragma: no cover - regex guarantees digits
+            continue
+    return values
+
+
+def _labeled_rounding_ok(
+    stripped_draft: str, start: int, token: str, allowed_floats: list[float]
+) -> bool:
+    """v18 (P0-3): models round ("8 min" for evidence 7.56) and the old
+    exact-match loop killed the WHOLE answer into a raw DEGRADED dump.
+    Accept a non-exact number ONLY when (a) the user-facing text labels it
+    approximate (≈ / ~ / approx / about / around / roughly right before it)
+    AND (b) it sits within 10% of some evidence number. Unlabeled or wider
+    numbers still fail the safety check."""
+    if not _ROUND_LABEL_RE.search(stripped_draft[:start]):
+        return False
+    try:
+        value = float(token)
+    except ValueError:
+        return False
+    for allowed in allowed_floats:
+        if allowed and abs(value - allowed) / abs(allowed) <= 0.10:
+            return True
+    return False
+
+
 def find_missing_numbers(draft: str, results: list[dict]) -> list[str]:
     """Numbers appearing in `draft` that do NOT appear anywhere in `results`."""
-    allowed = _corpus_numbers(_evidence_text(results))
+    evidence_text = _evidence_text(results)
+    allowed = _corpus_numbers(evidence_text)
+    allowed_floats = _corpus_floats(evidence_text)
 
+    stripped = _strip_thousands(draft)
     missing: list[str] = []
-    for match in _NUMBER_RE.finditer(_strip_thousands(draft)):
+    for match in _NUMBER_RE.finditer(stripped):
         token = match.group(0)
         if token in missing:
             continue
-        if not (_normalize_number(token) & allowed):
-            missing.append(token)
+        if _normalize_number(token) & allowed:
+            continue
+        if _labeled_rounding_ok(stripped, match.start(), token, allowed_floats):
+            continue
+        missing.append(token)
     return missing
 
 
@@ -175,6 +217,17 @@ def find_misattributed_numbers(draft: str, results: list[dict]) -> list[str]:
     return flagged
 
 
+def _disp_km(value: Any) -> str:
+    """Friendly distance for the humanized fallback: 6.12 -> 6.1, 29.05 -> 29."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if abs(number) >= 10:
+        return f"{number:.0f}"
+    return f"{number:.1f}"
+
+
 def render_structured(results: list[dict]) -> str:
     """LLM-free degraded answer: raw structured facts, one per line.
 
@@ -183,9 +236,11 @@ def render_structured(results: list[dict]) -> str:
     lines: list[str] = []
 
     for result in results:
+        seq = 0
+        discovery_header = False
         question = str(result.get("question") or "").strip()
         if question:
-            lines.append(f"Q: {question}")
+            lines.append(question)
 
         status = result.get("status")
         if status == "NEEDS_CLARIFICATION":
@@ -208,7 +263,12 @@ def render_structured(results: list[dict]) -> str:
                     f"{item.get('key')}: {item.get('value')} {unit}{approx} [{provider}]"
                 )
             elif kind == "place":
-                lines.append(f"{item.get('role')}: {item.get('name')}")
+                role = str(item.get("role") or "").strip()
+                name = item.get("name")
+                if role == "origin":
+                    lines.append(f"\U0001f4cd Starting from: {name}")
+                else:
+                    lines.append(f"\U0001f4cd {role or 'place'}: {name}")
             elif kind == "note" or kind == "error":
                 hint = item.get("hint")
                 base = str(
@@ -217,13 +277,41 @@ def render_structured(results: list[dict]) -> str:
                     or item.get("key")
                     or "note"
                 )
-                lines.append(f"{base}{(' - ' + str(hint)) if hint else ''}")
+                marker = "\u26a0\ufe0f " if kind == "error" else "\u2139\ufe0f "
+                lines.append(f"{marker}{base}{(' - ' + str(hint)) if hint else ''}")
             elif kind == "status":
                 lines.append(
                     f"provider status: {item.get('status')}"
                     + (f", selected: {item.get('selected')}" if item.get("selected") else "")
                 )
-            elif kind in {"hotel", "restaurant", "poi", "temple_candidate"}:
+            elif kind == "temple_candidate":
+                # v18 P0-1: humanized discovery block instead of raw keys.
+                if not discovery_header:
+                    lines.append(
+                        "Temples from our verified registry, nearest first:"
+                    )
+                    discovery_header = True
+                seq += 1
+                name = item.get("name") or "(unnamed temple)"
+                parts: list[str] = []
+                road = item.get("road_km")
+                minutes = item.get("road_minutes")
+                if road is not None:
+                    parts.append(f"\U0001f6e3\ufe0f \u2248{_disp_km(road)} km by road")
+                    if minutes is not None:
+                        try:
+                            parts.append(f"\u23f1 \u2248{int(round(float(minutes)))} min")
+                        except (TypeError, ValueError):
+                            pass
+                elif item.get("straight_km") is not None:
+                    parts.append(
+                        f"\U0001f6e3\ufe0f \u2248{_disp_km(item['straight_km'])} km"
+                        " straight-line (road routing unavailable)"
+                    )
+                if item.get("district"):
+                    parts.append(str(item["district"]))
+                lines.append(f"{seq}. \U0001f6d5 {name} \u2014 " + " \u00b7 ".join(parts))
+            elif kind in {"hotel", "restaurant", "poi"}:
                 # structured stays (audit C16): print name + the REAL keys
                 # the emitters use — hotels carry `phones`/`map_link`, not
                 # `phone`/`maps_link` (that mismatch hid every contact).
@@ -239,9 +327,6 @@ def render_structured(results: list[dict]) -> str:
                     ("phone", item.get("phone") or item.get("phones")),
                     ("address", item.get("address")),
                     ("distance", item.get("distance_km")),
-                    ("road", item.get("road_km")),
-                    ("road_time_min", item.get("road_minutes")),
-                    ("straight_line", item.get("straight_km")),
                     ("district", item.get("district")),
                     ("map", item.get("maps_link") or item.get("map_link")
                      or item.get("google_maps_url")),

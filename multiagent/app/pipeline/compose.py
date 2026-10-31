@@ -122,17 +122,29 @@ Hard rules:
 17. follow_ups: return EXACTLY 3 short follow-up questions in the user's
    language - natural NEXT questions that continue THIS conversation using
    the places and results already discussed (the same temple, route, stay,
-   budget). Each must be answerable from our capabilities (temple info,
-   travel routes, stays, food, budget, safety). Never promise live features
-   (ticket booking, seat availability, live traffic, payments, calling).
+   budget). When the evidence names a place, EVERY follow-up must include
+   that exact name (e.g. "What are the darshan timings at Birla Mandir?").
+   Order them as: more detail about the place -> how to get there / visit
+   logistics -> cost or timing. Address a constraint the user mentioned
+   (budget, transport, elderly or children) when one exists. Each must be
+   answerable from our capabilities (temple info, travel routes, stays,
+   food, budget, safety). Never promise live features (ticket booking,
+   seat availability, live traffic, payments, calling).
 18. Numbers are DIGITS only, copied from evidence: never spell numbers as
    words ("thirty kilometres", "nineteen seventy-six"). If you cannot
    write a number exactly as the evidence shows it, do not mention it.
+   Exception: you MAY write a friendlier rounded figure ONLY when it starts
+   with the ≈ sign and stays within 10% of the evidence number (e.g. evidence
+   7.56 -> "≈8 min"); keep the key figures exactly as given somewhere too.
 19. USE THE CONVERSATION HISTORY: when the question or history already
    names the place (e.g. an earlier turn established Birla Mandir in
    Hyderabad), NEVER ask for its city, state, or "which place you mean" -
    use that place directly. Ask a clarifying location question only when
    the place is genuinely unknown from BOTH the question and the history.
+20. Emoji (light): you MAY start a section line or a list item with ONE
+   relevant emoji - 🛕 temple, 📍 place, 🛣️ distance, ⏱ time, 🚌 transport,
+   💰 cost, ✅ verified, ⚠️ gap/estimate, 🗺️ trip. Max ONE emoji per line,
+   never inside a sentence, never emoji-only lines, and none in follow_ups.
 """
 
 CLARIFY_SYSTEM = """
@@ -167,6 +179,17 @@ _ANSWER_SCHEMA = {
 
 
 _RANGE_GLUE_RE = re.compile(r"(?<=\d)₹(?=\d)")
+
+_LIT_NEWLINE_RE = re.compile(r"\\+r\\+n|\\+n")
+
+
+def _sanitize_newlines(text: str) -> str:
+    """v18: models sometimes emit the TWO characters backslash+n inside the
+    reply instead of a real line break (users saw literal "\n" on screen).
+    Convert every such run into a real newline; no travel sentence ever
+    legitimately contains a backslash."""
+    text = _LIT_NEWLINE_RE.sub("\n", text)
+    return text.replace("\r\n", "\n")
 
 
 def _repair_range_glue(text: str) -> str:
@@ -277,7 +300,9 @@ def answer(
         if str(item).strip()
     ][:3]
     return {
-        "reply": _repair_unit_spacing(_repair_range_glue(reply)),
+        "reply": _repair_unit_spacing(
+            _repair_range_glue(_sanitize_newlines(reply))
+        ),
         "follow_ups": follow_ups,
     }
 

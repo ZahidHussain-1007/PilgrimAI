@@ -43,6 +43,49 @@ def _append_turn(history: list, user: str, reply: str, category: str) -> list:
     return history[-10:]
 
 
+def _evidence_entity(results: list[dict]) -> tuple[str, str] | None:
+    """v18: first NAMED entity in the evidence -> (kind, name).
+    Prefers a discovered temple, then a non-origin place/POI."""
+    fallback: tuple[str, str] | None = None
+    for result in results:
+        for item in result.get("evidence") or []:
+            if not isinstance(item, dict):
+                continue
+            kind = str(item.get("kind") or "")
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            if kind == "temple_candidate":
+                return ("temple", name)
+            if kind == "poi" and fallback is None:
+                fallback = ("place", name)
+            if kind == "place" and str(item.get("role") or "") != "origin":
+                if fallback is None:
+                    fallback = ("place", name)
+    return fallback
+
+
+def _fallback_follow_ups(results: list[dict]) -> list[str]:
+    """v18 P0-4: when the composer returned no follow-ups (LLM error or
+    DEGRADED), derive 3 logical next questions from the TOP entity instead
+    of shipping generic canned chips. detail -> logistics -> fit/cost."""
+    entity = _evidence_entity(results)
+    if entity is None:
+        return []
+    kind, name = entity
+    if kind == "temple":
+        return [
+            f"What are the darshan timings and entry details for {name}?",
+            f"How do I reach {name} from my starting point?",
+            f"Is {name} a good fit for elderly visitors and children?",
+        ]
+    return [
+        f"What can I see at {name}?",
+        f"How do I reach {name}?",
+        f"What is the best time to visit {name}?",
+    ]
+
+
 def _persist(session_id: str, history: list) -> None:
     save_session(
         session_id,
@@ -283,6 +326,12 @@ def chat(request: ChatRequest) -> dict:
         )
         reply = render_structured(results)
         status = "DEGRADED"
+
+    # v18 P0-4: never ship an answer without next-step questions —
+    # derive them from the top entity when the composer gave none
+    # (DEGRADED / LLM error paths otherwise fell back to generic chips).
+    if not follow_ups:
+        follow_ups = _fallback_follow_ups(results)
 
     # ---- STAGE 5: persist + respond ----
     _persist(
