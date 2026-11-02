@@ -1,4 +1,5 @@
 import { request } from "./client"
+import { getStoredLanguage } from "../../lib/prefs"
 import type { Message } from "../../types/message"
 
 const ANON_SESSION_KEY = "pilgrim:backend_session_id"
@@ -18,6 +19,7 @@ export const chatApi = {
         content: message,
         conversationId: conversationId || undefined,
         sessionId: anonSession,
+        language: getStoredLanguage(),
       }),
     })
 

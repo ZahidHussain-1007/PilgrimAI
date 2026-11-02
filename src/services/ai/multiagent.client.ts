@@ -3,6 +3,7 @@ import { BadRequestError, ApiError } from "@/lib/api/errors"
 export interface MultiAgentChatRequest {
   message: string
   session_id?: string
+  language?: string
 }
 
 export interface MultiAgentEvidenceItem {
@@ -66,7 +67,11 @@ export class MultiAgentClient {
     }
   }
 
-  async sendChat(message: string, sessionId?: string): Promise<MultiAgentChatResponse> {
+  async sendChat(
+    message: string,
+    sessionId?: string,
+    language?: string,
+  ): Promise<MultiAgentChatResponse> {
     const trimmed = message.trim()
     if (!trimmed) {
       throw new BadRequestError("Message content cannot be empty.")
@@ -75,6 +80,7 @@ export class MultiAgentClient {
     const payload: MultiAgentChatRequest = {
       message: trimmed,
       ...(sessionId ? { session_id: sessionId } : {}),
+      ...(language ? { language } : {}),
     }
 
     let res: Response

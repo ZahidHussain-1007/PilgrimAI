@@ -11,4 +11,5 @@ logs/
 *.log
 .tmp-*
 client_secret.json
-*.zip
+*.zipshots/
+multiagent/.session_fallback.json

@@ -82,6 +82,7 @@ export class AiService {
         conversationId !== "default"
           ? conversationId
           : options.sessionId || undefined,
+        options.language,
       )
 
       return this.mapMultiAgentResponse(response, {

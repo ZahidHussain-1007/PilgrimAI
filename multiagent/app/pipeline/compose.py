@@ -145,6 +145,11 @@ Hard rules:
    relevant emoji - 🛕 temple, 📍 place, 🛣️ distance, ⏱ time, 🚌 transport,
    💰 cost, ✅ verified, ⚠️ gap/estimate, 🗺️ trip. Max ONE emoji per line,
    never inside a sentence, never emoji-only lines, and none in follow_ups.
+21. validation_feedback: when the payload lists flagged numbers, those
+   exact strings were NOT found in the evidence. You MUST fix them before
+   resubmitting: either write the correct digits copied from the evidence,
+   or round with the ≈ label within 10%. NEVER resend the same unlabeled
+   number twice - that fails validation again and degrades the answer.
 """
 
 CLARIFY_SYSTEM = """

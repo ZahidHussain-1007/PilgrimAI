@@ -78,6 +78,10 @@ class Settings(BaseSettings):
     food_search_link: str = "https://www.google.com/maps/search/?api=1&query={query}"
 
     # --- Cache TTLs (config, not code) ---
+    # v18.2: after a 429, how long a PROVIDER stays out of the pool.
+    # User contract: "wait 10-30s, that's it" -> default 20s, tunable
+    # in .env via LLM_COOLDOWN_S (seconds).
+    llm_cooldown_s: int = 20
     ttl_geocode_s: int = 2_592_000
     ttl_route_s: int = 86_400
     ttl_places_s: int = 86_400

@@ -232,3 +232,41 @@ def test_non_rate_errors_do_not_trigger_cooldown():
     assert _call() == {"ok": True}
     assert _USED[:2] == ["k1", "k2"]
     assert "groq" not in llm_mod._provider_cooldown
+
+
+# --------------------------------------------- v18.2 quick cooldown + 404 body
+def test_cooldown_uses_user_setting_seconds(monkeypatch):
+    """User contract: wait 10-30s, not 10 min — default 20s, tunable."""
+    monkeypatch.setattr(llm_mod.settings, "llm_cooldown_s", 15)
+    monkeypatch.setattr(llm_mod.settings, "openaikey", "or1")
+    used_compat: list[str] = []
+
+    def fake_compat(entry, body):
+        used_compat.append(entry.label)
+        return '{"ok": true}'
+
+    monkeypatch.setattr(llm_mod, "_openai_compat_call", fake_compat)
+    _BEHAVIOUR["k1"] = Fake429("rate limit reached")
+    _call()
+    assert "groq" in llm_mod._provider_cooldown
+    remaining = llm_mod._provider_cooldown["groq"] - time.monotonic()
+    assert 10 <= remaining <= 16, f"cooldown {remaining:.0f}s not ~15s"
+
+
+def test_compat_http_error_carries_provider_body(monkeypatch):
+    """A bare 'google HTTP 404' is unactionable — the body must show WHY."""
+    class FakeResp:
+        status_code = 404
+        text = '{"error": {"message": "models/gemini-x is not found"}}'
+        request = None
+
+    monkeypatch.setattr(llm_mod.httpx, "post", lambda *a, **k: FakeResp())
+    entry = llm_mod.KeyEntry(
+        label="google", kind="openai_compat", api_key="k",
+        model="m", base_url="https://example.invalid/v1beta/openai",
+    )
+    with pytest.raises(Exception) as excinfo:
+        llm_mod._openai_compat_call(entry, {"model": "m"})
+    message = str(excinfo.value)
+    assert "google HTTP 404" in message
+    assert "not found" in message, "provider body missing from error"

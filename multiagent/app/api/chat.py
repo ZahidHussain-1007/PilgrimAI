@@ -268,10 +268,11 @@ def chat(request: ChatRequest) -> dict:
         return str(value), []
 
     try:
+        reply_language = (request.language or brain.language or "en")[:20]
         reply, follow_ups = _composed(
             compose_answer(
                 question=brain.rewritten_query,
-                language=brain.language,
+                language=reply_language,
                 results=results,
                 history=history[-2:],
             )
@@ -292,7 +293,7 @@ def chat(request: ChatRequest) -> dict:
             reply, follow_ups = _composed(
                 compose_answer(
                     question=brain.rewritten_query,
-                    language=brain.language,
+                    language=reply_language,
                     results=results,
                     feedback=missing,
                     history=history[-2:],

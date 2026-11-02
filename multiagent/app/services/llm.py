@@ -34,7 +34,6 @@ _rotation_lock = threading.Lock()
 # sibling keys are GUARANTEED to fail together). After a 429 we cool the
 # whole provider down instead of hammering its siblings on every request.
 _provider_cooldown: dict[str, float] = {}
-_COOLDOWN_SECONDS = 600.0
 
 
 def _provider_key(entry: KeyEntry) -> str:
@@ -202,8 +201,12 @@ def _openai_compat_call(entry: KeyEntry, body: dict[str, Any]) -> str:
         }
         response = _post(fallback)
     if response.status_code >= 400:
+        # v18.2: carry the provider's BODY so logs show WHY (404 = wrong
+        # endpoint/model/key format — e.g. Google wants AIza… AI-Studio
+        # keys on generativelanguage, not OAuth-style tokens).
+        body_snippet = (response.text or "").strip().replace("\n", " ")[:240]
         error = httpx.HTTPStatusError(
-            f"{entry.label} HTTP {response.status_code}",
+            f"{entry.label} HTTP {response.status_code}: {body_snippet}",
             request=response.request,
             response=response,
         )
@@ -326,13 +329,12 @@ def complete_json(
                 # Dead key: stop paying its failed round-trip on every call.
                 _revoked_keys.add(entry.api_key)
             if _is_rate_limit(exc) and provider not in _provider_cooldown:
-                _provider_cooldown[provider] = (
-                    time.monotonic() + _COOLDOWN_SECONDS
-                )
+                cooldown = max(5, int(settings.llm_cooldown_s))
+                _provider_cooldown[provider] = time.monotonic() + cooldown
                 logger.warning(
                     "provider %s rate-limited — cooling it down for %ds "
-                    "instead of hammering sibling keys (same-org quota)",
-                    provider, int(_COOLDOWN_SECONDS),
+                    "then retrying (same-org quota; tune LLM_COOLDOWN_S)",
+                    provider, cooldown,
                 )
             if index < len(pool):
                 continue

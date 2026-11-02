@@ -43,7 +43,7 @@ describe("AiService & MultiAgent Integration Unit Tests", () => {
       userId: "user-abc",
     })
 
-    expect(mockClient.sendChat).toHaveBeenCalledWith("What are Yadadri timings?", "conv-123")
+    expect(mockClient.sendChat).toHaveBeenCalledWith("What are Yadadri timings?", "conv-123", undefined)
     expect(result.role).toBe("assistant")
     expect(result.content).toBe(mockResponse.reply)
     expect(result.conversationId).toBe("conv-123")

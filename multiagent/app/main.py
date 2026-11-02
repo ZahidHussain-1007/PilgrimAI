@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from app.api.chat import router as chat_router
+from app.api.temple_suggest import router as temple_suggest_router
 
 
 class UTF8JSONResponse(JSONResponse):
@@ -14,6 +15,7 @@ app = FastAPI(
 )
 
 app.include_router(chat_router)
+app.include_router(temple_suggest_router)
 
 
 @app.get("/health")

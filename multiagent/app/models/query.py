@@ -6,3 +6,6 @@ class ChatRequest(BaseModel):
 
     message: str = Field(min_length=1)
     session_id: str | None = None
+    # v19: landing language chips (en/te/hi) — optional reply-language
+    # override; brain still auto-detects when absent.
+    language: str | None = None
