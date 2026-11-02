@@ -12,11 +12,16 @@ EXPECTED = {
     "T0006": "AMYpwaQwFKo",   # Jogulamba
     "T0010": "RSulQ8fr8oI",   # Sanghi
     "T0011": "G7E-GiI3k9k",   # Keesaragutta
-    "T0014": "yjRxKWxewqM",   # Ramappa
+    "T0014": "YflzmixmTKc",   # Ramappa, additional user-supplied clip
+    "T0015": "uaGrubVDiio",
+    "T0019": "aNInk-5uK38",
+    "T0021": "AqvP36HH0eY",
+    "T0022": "cNrOLnMw7mA",
+    "T0023": "g4kMf4h_7xE",
 }
 
 
-def test_six_temples_have_their_youtube_links():
+def test_eleven_temples_have_their_verified_youtube_links():
     for temple_id, video_id in EXPECTED.items():
         record = json.loads((TEMPLES / f"{temple_id}.json").read_text("utf-8"))
         assert record.get("video_url") == f"https://youtu.be/{video_id}", temple_id
@@ -44,3 +49,9 @@ def test_chat_request_accepts_language_override():
     assert plain.language is None
     telugu = ChatRequest(message="hello", language="te")
     assert telugu.language == "te"
+
+
+def test_ramappa_keeps_both_clips_without_claiming_twelve_unique_temples():
+    record=json.loads((TEMPLES / "T0014.json").read_text("utf-8"))
+    assert record["video_urls"] == ["https://youtu.be/yjRxKWxewqM", "https://youtu.be/YflzmixmTKc"]
+    assert len(EXPECTED)==11

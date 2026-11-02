@@ -1,6 +1,9 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import { useRouter } from "next/navigation"
+import { planningFetch, type PlanningJob } from "../../lib/planning"
+import { planningT } from "../../lib/planningCopy"
 import type { TempleSummary } from "../../lib/temples"
 import { youtubeVideoId } from "../../lib/youtube"
 import { useT } from "../../lib/i18n"
@@ -41,7 +44,7 @@ function distanceKm(origin: string, lat: number, lon: number): number | null {
       Math.cos((lat * Math.PI) / 180) *
       Math.sin(dLon / 2) ** 2
   const km = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-  return Math.max(5, Math.round(km / 5) * 5) // honest rounding to 5 km
+  return Math.round(km * 10) / 10 // straight-line distance, never a road claim
 }
 
 const PRIORITIES = [
@@ -87,7 +90,9 @@ export default function TripPlanner({
   selectedTemples?: TempleSummary[]
   onBack: () => void
 }) {
-  const { t } = useT()
+  const { t, lang } = useT()
+  const router = useRouter()
+  const p = (key: string) => planningT(lang, key)
 
   // ---- selection / playlist ------------------------------------------
   const selected = useMemo<TempleSummary[]>(
@@ -96,32 +101,13 @@ export default function TripPlanner({
   )
   const playable = useMemo<VideoItem[]>(() => {
     const list = selected
-      .map((tm) => {
-        const yt = youtubeVideoId(tm.videoUrl)
-        if (tm.videoFile) {
-          // owned/licensed file → clean HTML5 playback wins over YouTube
-          return {
-            templeId: tm.templeId,
-            videoId: `file:${tm.videoFile}`,
-            fileUrl: tm.videoFile,
-            ytId: null,
-            title: tm.name,
-            image: tm.image,
-          }
-        }
-        if (yt) {
-          return {
-            templeId: tm.templeId,
-            videoId: yt,
-            fileUrl: null,
-            ytId: yt,
-            title: tm.name,
-            image: tm.image,
-          }
-        }
-        return null
+      .flatMap((tm): VideoItem[] => {
+        if (tm.videoFile) return [{templeId:tm.templeId,videoId:`file:${tm.videoFile}`,fileUrl:tm.videoFile,ytId:null,title:tm.name,image:tm.image}]
+        return (tm.videoUrls || (tm.videoUrl ? [tm.videoUrl] : [])).flatMap(url => {
+          const yt = youtubeVideoId(url)
+          return yt ? [{templeId:tm.templeId,videoId:yt,fileUrl:null,ytId:yt,title:tm.name,image:tm.image}] : []
+        })
       })
-      .filter((x): x is NonNullable<typeof x> => Boolean(x))
     // the primary (featured) temple plays first — badge starts at 1 of N
     const at = list.findIndex((x) => x.templeId === temple.templeId)
     if (at > 0) return [list[at], ...list.slice(0, at), ...list.slice(at + 1)]
@@ -151,7 +137,7 @@ export default function TripPlanner({
     setVidx((i) => (items.length <= 1 ? 0 : (i + dir + items.length) % items.length))
 
   // ---- form state (preserved fields + new preferences) ----------------
-  const [origin, setOrigin] = useState("Hyderabad")
+  const [origin, setOrigin] = useState("")
   const [date, setDate] = useState("")
   const [days, setDays] = useState("1")
   const [budget, setBudget] = useState("mid")
@@ -166,7 +152,15 @@ export default function TripPlanner({
   const [special, setSpecial] = useState("none")
   const [prefsOpen, setPrefsOpen] = useState(true)
   const [planning, setPlanning] = useState(false)
-  const [done, setDone] = useState(false)
+  const [planError, setPlanError] = useState("")
+  const [departure, setDeparture] = useState("07:00")
+  const [finish, setFinish] = useState("21:00")
+  const [budgetCap, setBudgetCap] = useState("")
+  const [rooms, setRooms] = useState(1)
+  const [visitMinutes, setVisitMinutes] = useState(75)
+  const [restMinutes, setRestMinutes] = useState(15)
+  const [allowEstimates, setAllowEstimates] = useState(false)
+  const [includeAttractions, setIncludeAttractions] = useState(false)
 
   const total = Number(people)
   const compositionOk = adults + children + elderly === total
@@ -174,15 +168,23 @@ export default function TripPlanner({
   const togglePriority = (k: string) =>
     setPriorities((p) => (p.includes(k) ? p.filter((x) => x !== k) : [...p, k]))
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!compositionOk) return
+    if (!compositionOk || planning) return
+    setPlanError("")
     setPlanning(true)
-    // existing planning workflow (backend itinerary composer = P4+)
-    setTimeout(() => {
-      setPlanning(false)
-      setDone(true)
-    }, 4200)
+    try {
+      const job = await planningFetch<PlanningJob>("jobs", { method: "POST", body: JSON.stringify({
+        temple_ids: selected.map(tm => tm.templeId), origin, start_date: date, days: Number(days),
+        departure, finish, budget_cap: budgetCap ? Number(budgetCap) : null,
+        adults, children, elderly, transport, stay, food, special,
+        budget_tier: budget === "premium" ? "high" : budget, rooms, visit_minutes: visitMinutes,
+        rest_minutes: restMinutes, priorities, include_attractions: includeAttractions,
+        language: lang, allow_estimates: allowEstimates,
+      }) })
+      try { localStorage.setItem("pilgrim:active_plan", job.id) } catch {}
+      router.push("/itinerary/" + job.id)
+    } catch (error) { setPlanError(error instanceof Error ? error.message : p("failure")); setPlanning(false) }
   }
 
   // ---- real highlights strip (only sourced values) --------------------
@@ -194,7 +196,7 @@ export default function TripPlanner({
       value: t("plan.distFrom")
         .replace("{km}", String(km))
         .replace("{city}", origin.trim()),
-      label: t("plan.stripDistance"),
+      label: p("straightLine"),
     })
   }
   if (activeTemple.darshanHours) {
@@ -484,7 +486,7 @@ export default function TripPlanner({
                 {t("plan.duration")} <span className="text-[#c2511f]">*</span>
               </span>
               <select value={days} onChange={(e) => setDays(e.target.value)} className={inputCls}>
-                {["1", "2", "3", "4", "5"].map((d) => (
+                {["1", "2", "3", "4", "5", "6", "7"].map((d) => (
                   <option key={d} value={d}>
                     {t("plan.daysValue").replace("{n}", d)}
                   </option>
@@ -673,6 +675,19 @@ export default function TripPlanner({
             )}
           </div>
 
+          <fieldset className="mt-5 grid gap-4 rounded-2xl border border-[#e9d8c1] p-4 sm:grid-cols-2">
+            <legend className="px-2 font-serif font-semibold">{p("calendar")}</legend>
+            <label className="text-sm">{p("departure")}<input type="time" required value={departure} onChange={e=>setDeparture(e.target.value)} className={inputCls}/></label>
+            <label className="text-sm">{p("finish")}<input type="time" required value={finish} onChange={e=>setFinish(e.target.value)} className={inputCls}/></label>
+            <label className="text-sm">{p("budgetCap")}<input type="number" min="1" max="10000000" value={budgetCap} onChange={e=>setBudgetCap(e.target.value)} className={inputCls}/></label>
+            <label className="text-sm">{p("rooms")}<input type="number" required min="1" max="30" value={rooms} onChange={e=>setRooms(Number(e.target.value))} className={inputCls}/></label>
+            <label className="text-sm">{p("visit")}<input type="number" required min="30" max="240" value={visitMinutes} onChange={e=>setVisitMinutes(Number(e.target.value))} className={inputCls}/></label>
+            <label className="text-sm">{p("rest")}<input type="number" required min="0" max="90" value={restMinutes} onChange={e=>setRestMinutes(Number(e.target.value))} className={inputCls}/></label>
+            <label className="flex gap-2 text-xs leading-5 sm:col-span-2"><input type="checkbox" checked={allowEstimates} onChange={e=>setAllowEstimates(e.target.checked)}/>{p("estimates")}</label>
+            <label className="flex gap-2 text-xs leading-5 sm:col-span-2"><input type="checkbox" checked={includeAttractions} onChange={e=>setIncludeAttractions(e.target.checked)}/>{p("include")}</label>
+          </fieldset>
+
+          <p className="mt-4 text-xs leading-5 text-[#796b5d]">{p("baseNotice")}</p>
           {/* primary action */}
           <button
             type="submit"
@@ -697,12 +712,8 @@ export default function TripPlanner({
             )}
           </button>
 
-          {done && (
-            <div className="mt-5 rounded-xl border border-[#e3d3ae] bg-[#f8f2e6] p-4 text-sm text-[#5c5544]">
-              <p className="font-semibold text-[#29251f]">{t("plan.readyTitle")}</p>
-              <p className="mt-1">{t("plan.readyBody")}</p>
-            </div>
-          )}
+          {planError && <p role="alert" className="mt-4 rounded-xl border border-[#c76e48] bg-[#fff3e8] p-4 text-sm text-[#89391d]">{planError}</p>}
+
         </form>
       </div>
     </div>

@@ -13,3 +13,7 @@ logs/
 client_secret.json
 *.zipshots/
 multiagent/.session_fallback.json
+
+# Planning jobs, signed proxy key and local itinerary snapshots (never commit)
+.planning-runtime/
+shots/

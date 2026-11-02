@@ -12,6 +12,7 @@ export type TempleSummary = {
   reviewCount: number | null
   lat: number
   lon: number
+  videoUrls?: string[]
   videoUrl: string | null
   /**
    * Direct, self-hosted footage when the team drops an owned/licensed file at
@@ -64,6 +65,7 @@ export function loadTemples(): TempleSummary[] {
         lat: Number(loc.latitude) || 0,
         lon: Number(loc.longitude) || 0,
         videoUrl: r.video_url || null,
+        videoUrls: Array.isArray(r.video_urls) ? r.video_urls : r.video_url ? [r.video_url] : [],
         videoFile: (() => {
           const id = r.temple_id || file.replace(".json", "")
           for (const ext of ["mp4", "webm", "ogv"]) {

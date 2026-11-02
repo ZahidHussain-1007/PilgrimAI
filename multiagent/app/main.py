@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from app.planning.api import router as planning_router
 from app.api.chat import router as chat_router
 from app.api.temple_suggest import router as temple_suggest_router
 
@@ -14,6 +15,7 @@ app = FastAPI(
     default_response_class=UTF8JSONResponse,
 )
 
+app.include_router(planning_router)
 app.include_router(chat_router)
 app.include_router(temple_suggest_router)
 
