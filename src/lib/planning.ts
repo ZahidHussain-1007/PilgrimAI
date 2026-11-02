@@ -1,4 +1,18 @@
+export type PriceAllowance = { low: number; high: number };
 export type PlanningRequest = {
+  primary_temple_id?: string;
+  timezone?: "Asia/Kolkata";
+  stay_mode?: "daily_return" | "overnight";
+  hotel_id?: string | null;
+  avoid_climbing?: boolean;
+  daily_travel_limit_minutes?: number | null;
+  traffic_buffer_percent?: number;
+  parking_buffer_minutes?: number;
+  meal_minutes?: number;
+  meal_price_per_person?: PriceAllowance | null;
+  tolls_per_day?: PriceAllowance | null;
+  parking_per_visit?: PriceAllowance | null;
+  miscellaneous_per_day?: PriceAllowance | null;
   temple_ids: string[];
   origin: string;
   start_date: string;
@@ -31,6 +45,13 @@ export type PlanItem = {
   place_id?: string;
   distance_km?: number;
   source?: string;
+  verification?: string;
+  venue?: string;
+  meal?: string;
+  from_id?: string;
+  to_id?: string;
+  location_id?: string;
+  leg_complete?: boolean;
   estimated?: boolean;
   url?: string;
 };
@@ -39,22 +60,108 @@ export type PlanTemple = {
   name: string;
   url: string;
   hours_basis?: string;
+  lat?: number;
+  lng?: number;
+  last_verified?: string;
+  windows?: Record<string, number[][]>;
+  verification?: string;
+  source?: string;
   facts: Record<string, unknown>;
   nearby: { name: string; url: string; scheduled: boolean }[];
 };
+export type RoutePoint = { id: string; name: string; lat: number; lng: number };
+export type CostLine = {
+  category: string;
+  date: string;
+  quantity: number;
+  unit: string;
+  status: string;
+  unit_low: number | null;
+  unit_high: number | null;
+  low: number | null;
+  high: number | null;
+  source: string | null;
+  basis: string;
+  place_id?: string | null;
+};
+export type PlanDay = {
+  date: string;
+  items: PlanItem[];
+  coverage?: string;
+  incomplete_reason?: string;
+  route_points?: RoutePoint[];
+  maps_url?: string | null;
+  overnight?: {
+    hotel_id: string | null;
+    next_date: string;
+    rooms: number;
+    people: number;
+    availability: string;
+  };
+};
 export type PlanResult = {
+  schema_version?: number;
+  destinations?: PlanTemple[];
+  attractions?: {
+    id: string | null;
+    name: string;
+    url: string;
+    classification: string;
+    reason: string;
+    reason_codes?: string[];
+    distance_from_primary_km?: number;
+    visit_minutes?: number;
+  }[];
+  selection_rationale?: {
+    primary_temple_id: string;
+    required_ids: string[];
+    scheduled_ids: string[];
+  };
+  alternatives?: {
+    action: string;
+    suggested_days?: number;
+    reason: string;
+    checked_feasible?: boolean;
+    checked_days?: PlanDay[];
+    changes?: Record<string, unknown>;
+  }[];
+  validation?: {
+    passed: boolean;
+    critical: { code: string; details: string[] }[];
+    warnings: { code: string; details: string[] }[];
+  };
+  date_contract?: {
+    requested_dates: string[];
+    start_date: string;
+    end_date: string;
+    timezone: string;
+  };
   title: string;
-  days: { date: string; items: PlanItem[] }[];
+  days: PlanDay[];
   feasible: boolean;
   conflicts: { code: string; details: string[] }[];
   budget: {
     low: number;
     high: number;
     complete: boolean;
-    cap: number | null;
+    cap?: number | null;
+    total_type?: string;
+    known_subtotal?: number;
+    estimated_subtotal?: { low: number; high: number };
+    per_person?: { low: number; high: number; travellers: number };
+    categories?: {
+      category: string;
+      low: number;
+      high: number;
+      status: string;
+    }[];
+    daywise?: { date: string; low: number; high: number; unknown: string[] }[];
+    items?: CostLine[];
+    confidence?: string;
+    assumptions?: string[];
     within_cap: boolean | null;
-    distance_km: number;
-    components: { name: string; low: number; high: number; basis: string }[];
+    distance_km?: number;
+    components?: { name: string; low: number; high: number; basis: string }[];
     missing: string[];
   };
   request: PlanningRequest;
@@ -75,6 +182,8 @@ export type PlanResult = {
   options: {
     hotels: Record<string, unknown>[];
     restaurants: Record<string, unknown>[];
+    selected_hotel?: Record<string, unknown> | null;
+    notes?: string[];
   };
   agent_trace: { agent: string; mode: string }[];
   algorithm: string;
@@ -156,6 +265,27 @@ export function platformLinks(origin: string, destination: string) {
     },
   ];
 }
+/** Calendar dates are identities, not instants in the viewer's timezone. */
+export function formatPlanningDate(
+  value: string,
+  language: "en" | "te" | "hi" = "en",
+) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value))
+    throw new Error("Invalid calendar date");
+  const parsed = new Date(value + "T12:00:00Z");
+  if (
+    Number.isNaN(parsed.getTime()) ||
+    parsed.toISOString().slice(0, 10) !== value
+  )
+    throw new Error("Invalid calendar date");
+  return new Intl.DateTimeFormat(language + "-IN", {
+    timeZone: "UTC",
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  }).format(parsed);
+}
+
 export function calendarText(job: PlanningJob) {
   const escape = (s: string) =>
     s
@@ -168,6 +298,7 @@ export function calendarText(job: PlanningJob) {
     "VERSION:2.0",
     "PRODID:-//PilgrimAI//Validated planning draft//EN",
     "CALSCALE:GREGORIAN",
+    "X-WR-TIMEZONE:Asia/Kolkata",
   ];
   const stamp = new Date()
     .toISOString()

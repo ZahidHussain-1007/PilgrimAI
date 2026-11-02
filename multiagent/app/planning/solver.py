@@ -12,7 +12,7 @@ from datetime import timedelta
 
 from .calendar import clock, minutes
 
-MEALS = (("lunch", 750, 690), ("dinner", 1140, 1080))
+MEALS = (("breakfast", 510, 450), ("lunch", 750, 690), ("dinner", 1140, 1080))
 
 
 @dataclass
@@ -37,8 +37,8 @@ def _item(kind, title, start, end, **kw):
     }
 
 
-def _allowances(req):
-    visit = req.visit_minutes + (
+def _allowances(req, place=None):
+    visit = max(req.visit_minutes, (place or {}).get("visit_minutes") or 0) + (
         20 if req.elderly or req.special in {"elder", "wheel", "medical"} else 0
     )
     rest = max(req.rest_minutes, 20 if "family" in req.priorities else 0)
@@ -85,12 +85,14 @@ def _journey(state, destination, matrix, req):
                     "meal",
                     "meal_break",
                     s.now,
-                    s.now + 45,
+                    s.now + req.meal_minutes,
                     meal=name,
                     venue="unconfirmed en-route stop",
+                    verification="unconfirmed",
+                    location_id=None,
                 )
             )
-            s.now += 45
+            s.now += req.meal_minutes
             s.meals.add(name)
             driven = 0
             continue
@@ -158,16 +160,113 @@ def _journey(state, destination, matrix, req):
         )
     s.location = destination
     s.km += km
+    if (
+        req.daily_travel_limit_minutes is not None
+        and sum(i["duration_minutes"] for i in items if i["type"] == "travel")
+        > req.daily_travel_limit_minutes
+    ):
+        return None
     return s
 
 
-def _close(state, matrix, finish, req):
+def _close(state, matrix, finish, req, hotel=None):
+    destination = hotel["id"] if hotel and state.day < req.days - 1 else "origin"
     s = (
         deepcopy(state)
-        if state.location == "origin"
-        else _journey(state, "origin", matrix, req)
+        if state.location == destination
+        else _journey(state, destination, matrix, req)
     )
+    if s and hotel and state.day == 0 and destination == hotel["id"]:
+        at = max(s.now, hotel["check_in_minute"])
+        if at > s.now:
+            s.days[-1]["items"].append(
+                _item("wait", "wait_for_checkin", s.now, at, location_id=hotel["id"])
+            )
+        s.days[-1]["items"].append(
+            _item(
+                "checkin",
+                "hotel_checkin",
+                at,
+                at + 15,
+                place_id=hotel["id"],
+                url=hotel["maps_url"],
+                verification=hotel["verification"],
+            )
+        )
+        s.now = at + 15
     return s if s and s.now <= finish else None
+
+
+def _nearby_meal(state, name, req, matrix, restaurants):
+    """Only choose a venue when BOTH road transfers and dated hours fit the
+    reserved meal block. Never convert a distance-only listing into a road leg."""
+    reserve = req.meal_minutes
+    for venue in restaurants:
+        a = matrix.get(state.location + ">" + venue["id"])
+        b = matrix.get(venue["id"] + ">" + state.location)
+        if not a or not b or a.get("minutes") is None or b.get("minutes") is None:
+            continue
+        if math.ceil(a["minutes"]) + math.ceil(b["minutes"]) + 45 > reserve:
+            continue
+        arrival = state.now + math.ceil(a["minutes"])
+        if not any(
+            lo <= arrival and arrival + 45 <= hi
+            for lo, hi in venue.get("windows", {}).get(state.days[-1]["date"], [])
+        ):
+            continue
+        start = state.now
+        anchor = state.location
+        trial = deepcopy(state)
+        trial.meals.add(name)
+        trial = _journey(trial, venue["id"], matrix, req)
+        if not trial or trial.now != arrival:
+            continue
+        trial.days[-1]["items"].append(
+            _item(
+                "meal",
+                "meal_break",
+                trial.now,
+                trial.now + 45,
+                meal=name,
+                place_id=venue["id"],
+                location_id=venue["id"],
+                venue=venue["name"],
+                verification=venue["verification"],
+                url=venue["maps_url"],
+                source_record=venue["source_record"],
+            )
+        )
+        trial.now += 45
+        trial = _journey(trial, anchor, matrix, req)
+        if not trial or trial.now > start + reserve:
+            continue
+        if trial.now < start + reserve:
+            trial.days[-1]["items"].append(
+                _item(
+                    "buffer",
+                    "meal_transfer_buffer",
+                    trial.now,
+                    start + reserve,
+                    location_id=anchor,
+                )
+            )
+        trial.now = start + reserve
+        return trial
+    state.days[-1]["items"].append(
+        _item(
+            "meal",
+            "meal_break",
+            state.now,
+            state.now + reserve,
+            meal=name,
+            location_id=state.location,
+            venue="unconfirmed nearby venue",
+            verification="unconfirmed",
+        )
+    )
+    state.now += reserve
+    state.meals.add(name)
+    return state
 
 
 def solve(
@@ -177,6 +276,8 @@ def solve(
     beam_width: int = 192,
     time_budget_seconds: float = 12.0,
     known_fixed_cost: float = 0.0,
+    hotel: dict | None = None,
+    restaurants: list | None = None,
 ) -> dict:
     start, finish = minutes(req.departure), minutes(req.finish)
     states = [
@@ -201,21 +302,29 @@ def solve(
                 break
             if state.mask.bit_count() > best.mask.bit_count():
                 best = state
-            if state.mask == all_mask:
-                closed = _close(state, matrix, finish, req)
+            if state.mask == all_mask and (not hotel or state.day == req.days - 1):
+                closed = _close(state, matrix, finish, req, hotel)
                 if closed:
                     complete.append(closed)
                 continue
             for index, tm in enumerate(temples):
                 if state.mask & (1 << index):
                     continue
+                duration, rest = _allowances(req, tm)
                 candidate = _journey(state, tm["id"], matrix, req)
                 if not candidate:
                     continue
                 items = candidate.days[-1]["items"]
                 cursor = candidate.now
-                items.append(_item("buffer", "arrival_buffer", cursor, cursor + 10))
-                cursor += 10
+                items.append(
+                    _item(
+                        "buffer",
+                        "arrival_buffer",
+                        cursor,
+                        cursor + req.parking_buffer_minutes,
+                    )
+                )
+                cursor += req.parking_buffer_minutes
                 windows = tm["windows"].get(candidate.days[-1]["date"], [])
                 # Reserve any meal that would be skipped during a long wait/visit.
                 for name, target, earliest in MEALS:
@@ -238,18 +347,12 @@ def solve(
                             items.append(
                                 _item("wait", "wait_for_meal", cursor, meal_at)
                             )
-                        items.append(
-                            _item(
-                                "meal",
-                                "meal_break",
-                                meal_at,
-                                meal_at + 45,
-                                meal=name,
-                                venue="unconfirmed nearby venue",
-                            )
+                        candidate.now = meal_at
+                        candidate = _nearby_meal(
+                            candidate, name, req, matrix, restaurants or []
                         )
-                        cursor = meal_at + 45
-                        candidate.meals.add(name)
+                        items = candidate.days[-1]["items"]
+                        cursor = candidate.now
                 slots = [
                     max(cursor, a)
                     for a, b in windows
@@ -270,6 +373,9 @@ def solve(
                         end,
                         place_id=tm["id"],
                         url=tm["url"],
+                        verification=tm.get("verification", "catalog_not_live"),
+                        visit_kind=tm.get("kind", "temple"),
+                        source_record=tm.get("source"),
                     )
                 )
                 if rest:
@@ -280,7 +386,7 @@ def solve(
             # A failed visit today may become possible on a later weekday. Empty
             # days are retained, not silently shifted or represented as visits.
             if state.day + 1 < req.days:
-                closed = _close(state, matrix, finish, req)
+                closed = _close(state, matrix, finish, req, hotel)
                 if closed:
                     closed.day += 1
                     closed.now = start
@@ -293,13 +399,34 @@ def solve(
                             "items": [],
                         }
                     )
+                    if hotel and closed.day == req.days - 1:
+                        closed.days[-1]["items"].append(
+                            _item(
+                                "checkout",
+                                "hotel_checkout",
+                                start,
+                                start + 15,
+                                place_id=hotel["id"],
+                                url=hotel["maps_url"],
+                                verification=hotel["verification"],
+                            )
+                        )
+                        closed.now = start + 15
+                        if closed.now > hotel["check_out_minute"]:
+                            continue
                     candidates.append(closed)
         if not candidates or time.monotonic() >= deadline:
             break
         candidates.sort(key=lambda s: (-s.mask.bit_count(), s.day, s.now, s.km))
         dedup = {}
         for s in candidates:
-            key = (s.mask, s.day, s.location, tuple(sorted(s.meals)))
+            key = (
+                s.mask,
+                s.day,
+                s.location,
+                tuple(sorted(s.meals)),
+                tuple(any(i["type"] == "visit" for i in d["items"]) for d in s.days),
+            )
             frontier = dedup.setdefault(key, [])
             if any(old.now <= s.now and old.km <= s.km for old in frontier):
                 continue
@@ -312,8 +439,8 @@ def solve(
             key=lambda s: (-s.mask.bit_count(), s.day, s.now, s.km),
         )[:beam_width]
     for s in states:
-        if s.mask == all_mask:
-            closed = _close(s, matrix, finish, req)
+        if s.mask == all_mask and (not hotel or s.day == req.days - 1):
+            closed = _close(s, matrix, finish, req, hotel)
             if closed:
                 complete.append(closed)
     if not complete:
@@ -342,12 +469,33 @@ def solve(
             s.km * settings.fuel_cost_per_km if req.transport == "car" else 0
         )
         cap_exceeded = req.budget_cap is not None and known_cost > req.budget_cap
+        primary_day = next(
+            (
+                i
+                for i, d in enumerate(s.days)
+                if any(
+                    x.get("place_id") == req.primary_temple_id and x["type"] == "visit"
+                    for x in d["items"]
+                )
+            ),
+            req.days,
+        )
+        covered = sum(any(i["type"] == "visit" for i in d["items"]) for d in s.days)
         if "quick" in req.priorities:
-            return (cap_exceeded, len(active), sum(elapsed), s.km)
+            return (
+                req.days - covered,
+                cap_exceeded,
+                primary_day,
+                len(active),
+                sum(elapsed),
+                s.km,
+            )
         # Spread visits over the requested duration when possible. Empty/free
         # days are explicit; they are never charged as fictional temple visits.
         return (
+            req.days - covered,
             cap_exceeded,
+            primary_day,
             abs(len(active) - min(req.days, len(temples))),
             max(elapsed or [0]),
             s.km,
@@ -369,17 +517,24 @@ def solve(
         "algorithm": "bounded-beam-v2",
         "beam_width": beam_width,
         "optimality": "not guaranteed",
-        "base_policy": "Each day starts and returns to the supplied origin; hotels/attractions are unscheduled options. Lunch/dinner and en-route rests are planning allowances; venues are unconfirmed.",
+        "base_policy": req.stay_mode,
     }
-    errors = validate(req, temples, result, matrix)
+    errors = validate(req, temples, result, matrix, hotel=hotel)
     return (
-        {**result, "feasible": False, "conflicts": errors, "days": []}
+        {
+            **result,
+            "feasible": False,
+            "conflicts": errors,
+            "days": result["days"]
+            if all(e["code"] == "DAY_UNPLANNED" for e in errors)
+            else [],
+        }
         if errors
         else result
     )
 
 
-def validate(req, temples, result, matrix):
+def validate(req, temples, result, matrix, hotel=None):
     """Recompute coverage, dates, travel continuity/provider totals, daily bounds,
     visit windows/duration, required rest and crossed meal thresholds independently.
     Pricing/accessibility/booking are separate evidence checks, not invented here.
@@ -398,12 +553,14 @@ def validate(req, temples, result, matrix):
     if len(days) != req.days:
         error("DAY_COUNT_INVALID", [len(days)])
     for index, day in enumerate(days):
+        if not any(i.get("type") == "visit" for i in day.get("items", [])):
+            error("DAY_UNPLANNED", [day.get("date")])
         if day["date"] != (req.start_date + timedelta(days=index)).isoformat():
             error("DATE_INVALID", [day["date"]])
         cursor = start
         driving_since_break = 0
         last_arrival = start - 10
-        location = "origin"
+        location = hotel["id"] if hotel and index > 0 else "origin"
         pending = None
         motion = 0
         distance = 0.0
@@ -424,6 +581,8 @@ def validate(req, temples, result, matrix):
                 "rest",
                 "wait",
                 "buffer",
+                "checkin",
+                "checkout",
             }:
                 error("ITEM_TYPE_INVALID", [n])
             if item["type"] in {"rest", "meal", "visit", "wait"} and b - a >= 15:
@@ -475,13 +634,14 @@ def validate(req, temples, result, matrix):
                     for lo, hi in by_id[tid]["windows"].get(day["date"], [])
                 ):
                     error("CLOSED_DURING_VISIT", [tid])
-                if a - last_arrival < 10:
+                if a - last_arrival < req.parking_buffer_minutes:
                     error("ARRIVAL_BUFFER_MISSING", [tid])
                 if tid in by_id and (
                     item.get("title") != by_id[tid]["name"]
                     or item.get("url") != by_id[tid]["url"]
                 ):
                     error("VISIT_EVIDENCE_INVALID", [tid])
+                duration, _ = _allowances(req, by_id.get(tid))
                 if b - a < duration:
                     error("VISIT_TOO_SHORT", [tid])
                 following = day["items"][n + 1] if n + 1 < len(day["items"]) else {}
@@ -502,7 +662,8 @@ def validate(req, temples, result, matrix):
                     error("MEAL_WINDOW_INVALID", [n])
             elif pending and item["type"] not in {"meal", "rest"}:
                 error("ROUTE_INTERRUPTED", [n])
-        if pending or location != "origin":
+        expected_end = hotel["id"] if hotel and index < req.days - 1 else "origin"
+        if pending or location != expected_end:
             error("RETURN_MISSING", [day["date"]])
         for name, target, _ in MEALS:
             if start <= target and cursor > target + 30 and name not in meal_names:

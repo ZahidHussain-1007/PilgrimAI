@@ -1,0 +1,324 @@
+{
+  "baseline": "94ff75a3d7b9d206fbb14becea3dd302c7d79742",
+  "branch": "feat/v21-complete-planning",
+  "verified_on_local_date": "2026-11-02",
+  "environment": {
+    "python": "3.13.16",
+    "node": "v22.23.4",
+    "viewport": {
+      "width": 1568,
+      "height": 882
+    },
+    "viewer_timezone": "America/Los_Angeles"
+  },
+  "gates": {
+    "typecheck": "PASS",
+    "frontend": {
+      "tests": 148,
+      "files": 23,
+      "status": "PASS"
+    },
+    "backend": {
+      "passed": 271,
+      "skipped": 2,
+      "status": "PASS",
+      "skips": "External Redis integration not configured"
+    },
+    "planning_v21_tests": 49,
+    "production_build": "PASS (Next stopped before build, restarted afterward)",
+    "browser_main": {
+      "passed": 25,
+      "failed": 0
+    },
+    "browser_legacy": {
+      "passed": 23,
+      "failed": 0
+    },
+    "live_A_G": {
+      "passed": 7,
+      "failed": 0
+    },
+    "diff_check": "PASS"
+  },
+  "live_cases": [
+    {
+      "case": "A",
+      "pass": true,
+      "status": "completed",
+      "codes": [],
+      "dates": [
+        "2026-11-04"
+      ],
+      "visits": [
+        {
+          "id": "T0001",
+          "start": "10:00",
+          "end": "11:15"
+        }
+      ],
+      "budget": {
+        "low": 1485.69,
+        "high": 3285.69,
+        "missing": [
+          "miscellaneous",
+          "parking",
+          "tolls"
+        ]
+      },
+      "alternatives": []
+    },
+    {
+      "case": "B",
+      "pass": true,
+      "status": "completed",
+      "codes": [],
+      "dates": [
+        "2026-11-04",
+        "2026-11-05"
+      ],
+      "visits": [
+        {
+          "id": "T0001",
+          "start": "10:00",
+          "end": "11:15"
+        },
+        {
+          "id": "T0022",
+          "start": "09:02",
+          "end": "12:02"
+        }
+      ],
+      "budget": {
+        "low": 4248.59,
+        "high": 7548.59,
+        "missing": [
+          "miscellaneous",
+          "parking",
+          "tolls"
+        ]
+      },
+      "alternatives": []
+    },
+    {
+      "case": "C",
+      "pass": true,
+      "status": "needs_changes",
+      "codes": [
+        "REQUIRED_VISIT_MISSING_OR_DUPLICATED",
+        "PRIMARY_TEMPLE_MISSING",
+        "HOTEL_REQUIREMENTS_UNVERIFIED",
+        "DAY_UNPLANNED",
+        "DAY_UNPLANNED"
+      ],
+      "dates": [
+        "2026-11-04",
+        "2026-11-05"
+      ],
+      "visits": [],
+      "budget": {
+        "low": 0,
+        "high": 0,
+        "missing": [
+          "fuel",
+          "miscellaneous",
+          "parking",
+          "stay",
+          "tolls"
+        ]
+      },
+      "alternatives": [
+        {
+          "action": "confirm_hotel"
+        }
+      ]
+    },
+    {
+      "case": "D",
+      "pass": true,
+      "status": "needs_changes",
+      "codes": [
+        "REQUIRED_VISIT_MISSING_OR_DUPLICATED",
+        "REQUIRED_VISIT_MISSING_OR_DUPLICATED",
+        "PRIMARY_TEMPLE_MISSING",
+        "DAY_UNPLANNED"
+      ],
+      "dates": [
+        "2026-11-04"
+      ],
+      "visits": [],
+      "budget": {
+        "low": 0,
+        "high": 0,
+        "missing": [
+          "fuel",
+          "miscellaneous",
+          "parking",
+          "tolls"
+        ]
+      },
+      "alternatives": [
+        {
+          "action": "change_days_or_stops"
+        },
+        {
+          "action": "extend_duration_or_overnight",
+          "days": 2,
+          "checked_feasible": true
+        }
+      ]
+    },
+    {
+      "case": "E",
+      "pass": true,
+      "status": "completed",
+      "codes": [],
+      "dates": [
+        "2026-11-04",
+        "2026-11-05"
+      ],
+      "visits": [
+        {
+          "id": "T0001",
+          "start": "10:00",
+          "end": "11:35"
+        },
+        {
+          "id": "T0011",
+          "start": "08:53",
+          "end": "10:28"
+        }
+      ],
+      "budget": {
+        "low": 1985.68,
+        "high": 3785.68,
+        "missing": [
+          "food",
+          "miscellaneous",
+          "parking",
+          "tolls"
+        ]
+      },
+      "alternatives": []
+    },
+    {
+      "case": "F",
+      "pass": true,
+      "status": "needs_changes",
+      "codes": [
+        "PRICED_COSTS_EXCEED_CAP",
+        "BUDGET_NOT_FULLY_PRICED"
+      ],
+      "dates": [
+        "2026-11-04"
+      ],
+      "visits": [
+        {
+          "id": "T0001",
+          "start": "10:00",
+          "end": "11:15"
+        }
+      ],
+      "budget": {
+        "low": 1485.69,
+        "high": 3285.69,
+        "missing": [
+          "miscellaneous",
+          "parking",
+          "tolls"
+        ]
+      },
+      "alternatives": [
+        {
+          "action": "price_or_revise_budget"
+        }
+      ]
+    },
+    {
+      "case": "G",
+      "pass": true,
+      "status": "needs_changes",
+      "codes": [
+        "MEAL_DIET_UNVERIFIED"
+      ],
+      "dates": [
+        "2026-11-04"
+      ],
+      "visits": [
+        {
+          "id": "T0022",
+          "start": "09:02",
+          "end": "12:02"
+        },
+        {
+          "id": "T0001",
+          "start": "13:34",
+          "end": "14:49"
+        }
+      ],
+      "budget": {
+        "low": 1954.29,
+        "high": 1954.29,
+        "missing": [
+          "food",
+          "miscellaneous",
+          "parking",
+          "tolls"
+        ]
+      },
+      "alternatives": []
+    }
+  ],
+  "source_security": {
+    "protected_sha256": {
+      "multiagent/app/api/chat.py": "c033b38c484b0f257c89089213f4c5ed36452ba66b30157e02bcaa5308b63b26",
+      "multiagent/app/core/config.py": "74fdffb33ff413932ce5ebedd9c158cb5dc7c50169119ce98fdddf6de66b5f64",
+      "multiagent/app/models/query.py": "4f079be7dec78dca209a3dd77e6ca589e92d269d16904c1336d6515d64b75197",
+      "multiagent/app/pipeline/compose.py": "f62c1667440963444804f0748d985d89bf95c7703563895752264bb62bb5120b",
+      "multiagent/app/services/llm.py": "932c0c645acff67a9266e44fc1b752141891fc0cfdf5163569ff47466ea3e2af"
+    },
+    "original_worktree_clean": true,
+    "package_manifests_and_lock_unchanged": true,
+    "runtime_and_secrets_excluded": true
+  },
+  "known_limitations": [
+    "Live overnight C is intentionally needs_changes, not a verified hotel success.",
+    "Named meal routing is fixture-tested; original live coordinates remain unknown.",
+    "Partial priced totals exclude unknown costs.",
+    "One existing critical Next dependency vulnerability remains; no audit fix applied.",
+    "Bounded search is not an optimality or infeasibility proof."
+  ],
+  "exact_files": [
+    "docs/v21-complete-planning.md",
+    "docs/v21-verification.json",
+    "multiagent/app/planning/api.py",
+    "multiagent/app/planning/contracts.py",
+    "multiagent/app/planning/costing.py",
+    "multiagent/app/planning/discovery.py",
+    "multiagent/app/planning/engine.py",
+    "multiagent/app/planning/evidence.py",
+    "multiagent/app/planning/intent.py",
+    "multiagent/app/planning/jobs.py",
+    "multiagent/app/planning/models.py",
+    "multiagent/app/planning/options.py",
+    "multiagent/app/planning/solver.py",
+    "multiagent/app/planning/validation.py",
+    "multiagent/app/planning/venues.py",
+    "multiagent/tests/test_planning.py",
+    "multiagent/tests/test_planning_v21.py",
+    "p5-complete-planning.mjs",
+    "p5-planning-cases.mjs",
+    "p5-real-itinerary.mjs",
+    "src/app/planning/[id]/page.tsx",
+    "src/components/plan/TripPlanner.tsx",
+    "src/components/planning/ItineraryWorkspace.tsx",
+    "src/components/planning/PlanSummary.tsx",
+    "src/components/planning/PlanningExperience.tsx",
+    "src/components/planning/PlanningJobPage.tsx",
+    "src/lib/__tests__/planning.test.ts",
+    "src/lib/planning.ts",
+    "src/lib/planningCopy.ts",
+    "src/lib/planningV21Copy.ts",
+    "src/proxy.ts",
+    "tests/unit/planningOwner.test.ts"
+  ]
+}

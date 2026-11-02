@@ -9,13 +9,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 from urllib.parse import urlencode
 
-from app.agents import accommodation, budget, temple
-from app.core.config import settings
+from app.agents import temple
 from app.travel.providers.routing import route_osrm
 from app.travel.resolver import resolve_place
 from app.travel.schemas import Coordinate
 
 from .calendar import _normalized, opening_windows
+from .contracts import RouteEvidence, TempleEvidence
 
 
 def map_link(query: str) -> str:
@@ -55,7 +55,49 @@ def platform_links(origin: str, destination: str) -> list[dict]:
     ]
 
 
-def catalog(ids: list[str], start: date, days: int) -> list[dict]:
+def _visit_allowance(raw):
+    import re
+
+    for seva in raw.get("sevas") or []:
+        if not isinstance(seva, dict) or not re.search(
+            r"general|entry|visit|museum", str(seva.get("name", "")), re.I
+        ):
+            continue
+        match = re.search(
+            r"takes?\s+(\d+)\s*[-–]\s*(\d+)\s*hours?",
+            str(seva.get("description", "")),
+            re.I,
+        )
+        if match:
+            return int(match[2]) * 60
+    return None
+
+
+def _effort(raw):
+    import re
+
+    text = json.dumps(
+        {k: raw.get(k) for k in ["accessibility", "overview", "sevas"]},
+        ensure_ascii=False,
+    ).lower()
+    if re.search(r"climb|steep|trekk|[1-9][0-9]{2,}\s+steps", text):
+        access = str(
+            (raw.get("accessibility") or {}).get("wheelchair_access", "")
+        ).lower()
+        return (
+            "assisted_access"
+            if re.search(r"lift|shuttle|battery.operated", access)
+            else "climbing"
+        )
+    walks = re.findall(
+        r"(\d+(?:\.\d+)?)\s*[- ]?\s*km\s+(?:pathway|walkway|walk|trail)", text
+    )
+    if any(float(km) >= 2 for km in walks):
+        return "long_walk"
+    return "unknown"
+
+
+def catalog(ids: list[str], start: date, days: int) -> list[TempleEvidence]:
     from datetime import timedelta
 
     result = []
@@ -83,6 +125,21 @@ def catalog(ids: list[str], start: date, days: int) -> list[dict]:
             {
                 "id": tid,
                 "name": raw["name"],
+                "verification": "catalog_not_live",
+                "source": f"multiagent/data/temples/{tid}.json",
+                "last_verified": raw.get("last_verified"),
+                "required": True,
+                "kind": "attraction"
+                if any(
+                    w
+                    in (
+                        str(raw.get("summary", "")) + " " + str(raw.get("overview", ""))
+                    ).lower()
+                    for w in ["museum", "theme park"]
+                )
+                else "temple",
+                "visit_minutes": _visit_allowance(raw),
+                "effort": _effort(raw),
                 "lat": lat,
                 "lng": lng,
                 "hours_basis": _normalized().get(tid, {}).get("note", "Unknown"),
@@ -129,7 +186,13 @@ def origin_point(text: str) -> dict:
         lat, lng = float(match[1]), float(match[2])
         if not (15.6 <= lat <= 20.3 and 76.6 <= lng <= 81.5):
             raise ValueError("Coordinates are outside the Telangana service area.")
-        return {"id": "origin", "name": text, "lat": lat, "lng": lng}
+        return {
+            "id": "origin",
+            "name": text,
+            "lat": lat,
+            "lng": lng,
+            "source": "user_coordinates",
+        }
     place = resolve_place(text)
     if not place or not place.coordinates:
         raise ValueError(
@@ -140,6 +203,8 @@ def origin_point(text: str) -> dict:
         "name": place.display_name,
         "lat": place.coordinates.latitude,
         "lng": place.coordinates.longitude,
+        "source": place.source,
+        "confidence": place.confidence,
     }
 
 
@@ -150,7 +215,9 @@ def _distance(a: dict, b: dict) -> float:
     return 6371 * 2 * math.atan2(math.sqrt(h), math.sqrt(max(0, 1 - h)))
 
 
-def route_pair(a: dict, b: dict, allow_estimates: bool, deadline: float) -> dict:
+def route_pair(
+    a: dict, b: dict, allow_estimates: bool, deadline: float
+) -> RouteEvidence:
     base = {
         "from": a["id"],
         "to": b["id"],
@@ -202,9 +269,26 @@ def route_pair(a: dict, b: dict, allow_estimates: bool, deadline: float) -> dict
         }
 
 
-def route_matrix(points: list[dict], allow_estimates: bool) -> dict:
+def route_matrix(points: list[dict], allow_estimates: bool) -> dict[str, RouteEvidence]:
     deadline = time.monotonic() + 38
+    unique = {p["id"]: p for p in points}
+    points = list(unique.values())
     pairs = [(a, b) for a in points for b in points if a["id"] != b["id"]]
+
+    def required(p):
+        return (
+            p["id"] == "origin" or p.get("required", False) or p.get("kind") == "hotel"
+        )
+
+    pairs.sort(
+        key=lambda pair: (
+            0
+            if all(required(p) for p in pair)
+            else 1
+            if any(required(p) for p in pair)
+            else 2
+        )
+    )
     result = {}
     with ThreadPoolExecutor(max_workers=6) as pool:
         futures = {
@@ -217,176 +301,22 @@ def route_matrix(points: list[dict], allow_estimates: bool) -> dict:
     return result
 
 
-def stay_food(req, temples: list[dict]) -> dict:
-    """Reuse catalog normalization and strict post-merge constraints, not slow live search.
-    Candidates are options, not booked/scheduled properties with invented transfers.
-    """
-    options = {"hotels": [], "restaurants": []}
-    for tm in temples:
-        for kind, key in [("hotel", "hotels"), ("restaurant", "restaurants")]:
-            if kind == "hotel" and (req.days < 2 or req.stay == "none"):
-                continue
-            question = (
-                (
-                    "pure vegetarian"
-                    if req.food == "veg"
-                    else "jain"
-                    if req.food == "jain"
-                    else ""
-                )
-                if kind == "restaurant"
-                else ""
-            )
-            records = (
-                accommodation._load_hotels()
-                if kind == "hotel"
-                else accommodation._load_restaurants()
-            )
-            selected = accommodation._select_static(
-                records,
-                question=question,
-                entities=[tm["name"]],
-                temple_ids=[tm["id"]],
-                kind=kind,
-            )
-            if kind == "hotel":
-                import re
+def stay_food(req, temples):
+    from .options import retrieve
 
-                if req.stay in {"guest", "dham"}:
-                    pattern = (
-                        r"guest|lodge|choultry"
-                        if req.stay == "guest"
-                        else r"dharam|dham|yatri|satra|choultry|dorm"
-                    )
-                    selected = [
-                        r
-                        for r in selected
-                        if re.search(
-                            pattern,
-                            str(r.get("hotel_type", "")) + " " + r["name"],
-                            re.I,
-                        )
-                    ]
-                selected.sort(
-                    key=lambda r: (
-                        budget._parse_price_range(r.get("price_range"))
-                        or (float("inf"), float("inf"))
-                    )[0],
-                    reverse=req.budget_tier == "high",
-                )
-                if req.budget_tier == "mid" and len(selected) > 3:
-                    selected = selected[(len(selected) - 3) // 2 :]
-            selected = [r for r in selected if r.get("temple_id") == tm["id"]][:3]
-            items = [
-                accommodation._hotel_evidence(r)
-                if kind == "hotel"
-                else accommodation._restaurant_evidence(r)
-                for r in selected
-            ]
-            items, _ = accommodation._enforce_post_merge_constraints(
-                items, question, kind
-            )
-            if req.food == "nonveg" and kind == "restaurant":
-                items = []  # no explicit non-veg contract in this catalog adapter
-            if req.food == "jain" and kind == "restaurant":
-                items = []  # pure veg does not establish Jain suitability
-            for item in items:
-                options[key].append(
-                    {
-                        **item,
-                        "temple_id": tm["id"],
-                        "maps_url": map_link(
-                            str(item.get("name", "")) + " " + tm["name"]
-                        ),
-                        "availability": "unverified",
-                    }
-                )
-    return options
+    return retrieve(req, temples)
 
 
-def calculate_budget(req, days: list[dict], options: dict) -> dict:
-    """Use existing budget-agent money parsing; arithmetic is per explicit unit."""
-    total_people = req.adults + req.children + req.elderly
-    km = sum(
-        float(i.get("distance_km") or 0)
-        for d in days
-        for i in d["items"]
-        if i["type"] == "travel"
+def calculate_budget(req, days: list[dict], options: dict, places=None) -> dict:
+    """Compatibility entry point; all budgeting now uses the selected-activity ledger."""
+    from .costing import calculate
+
+    return calculate(
+        req, days, options, places or catalog(req.temple_ids, req.start_date, req.days)
     )
-    components = []
-    missing = [
-        "Temple tickets / optional sevas: confirm selected services and current charges",
-        "Tolls, parking and any booking taxes not supplied by providers",
-    ]
-    if req.transport == "car":
-        amount = round(km * settings.fuel_cost_per_km)
-        components.append(
-            {
-                "name": "vehicle_fuel",
-                "low": amount,
-                "high": amount,
-                "basis": f"{km:.1f} km × ₹{settings.fuel_cost_per_km}/km, per vehicle; estimates inherit route uncertainty",
-            }
-        )
-    else:
-        missing.append(
-            "Public transport fares / taxi quote: not available; platform search is not a fare"
-        )
-    restaurant_costs = []
-    for r in options["restaurants"]:
-        one = r.get("average_cost_for_one")
-        two = r.get("average_cost_for_two")
-        try:
-            cost = (
-                float(one)
-                if one is not None
-                else float(two) / 2
-                if two is not None
-                else None
-            )
-            if cost is not None:
-                restaurant_costs.append(cost)
-        except (ValueError, TypeError):
-            pass
-    if restaurant_costs:
-        count = 3 * req.days * total_people
-        components.append(
-            {
-                "name": "food",
-                "low": round(min(restaurant_costs) * count),
-                "high": round(max(restaurant_costs) * count),
-                "basis": f"3 meals/day × {total_people} people × {req.days} days; catalog meal-price scenario, not a booking",
-            }
-        )
-    else:
-        missing.append("Food prices matching your dietary requirements")
-    if req.days > 1 and req.stay != "none":
-        costs = [
-            budget._parse_price_range(h.get("price_range")) for h in options["hotels"]
-        ]
-        costs = [c for c in costs if c]
-        if costs:
-            n = (req.days - 1) * req.rooms
-            components.append(
-                {
-                    "name": "stay",
-                    "low": round(min(c[0] for c in costs) * n),
-                    "high": round(max(c[1] for c in costs) * n),
-                    "basis": f"{req.days - 1} nights × {req.rooms} rooms; occupancy, property category and date-specific availability unverified",
-                }
-            )
-        else:
-            missing.append("Accommodation price and occupancy")
-    low = sum(c["low"] for c in components)
-    high = sum(c["high"] for c in components)
-    return {
-        "currency": "INR",
-        "components": components,
-        "low": low,
-        "high": high,
-        "missing": missing,
-        "complete": False,
-        "cap": req.budget_cap,
-        "within_cap": None if req.budget_cap is None else high <= req.budget_cap,
-        "distance_km": round(km, 1),
-    }
+
+
+def locate_options(req, options, places):
+    from .venues import locate
+
+    return locate(req, options, places)

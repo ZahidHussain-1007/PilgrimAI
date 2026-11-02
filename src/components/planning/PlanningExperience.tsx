@@ -57,8 +57,8 @@ export function PlanningExperience({
   const stages = [
     "queued",
     "temples",
-    "routes",
     "stay_food",
+    "routes",
     "schedule",
     "budget",
     "validate",
@@ -66,7 +66,7 @@ export function PlanningExperience({
   const current = stages.indexOf(job.stage);
   return (
     <section
-      className="mx-auto max-w-[1400px] p-4 sm:p-7"
+      className="mx-auto max-w-[1180px] p-4 sm:p-7"
       aria-live="polite"
       data-planning-experience
     >
@@ -78,6 +78,9 @@ export function PlanningExperience({
           <h1 className="mt-1 font-serif text-2xl sm:text-3xl">
             {p("waiting")}
           </h1>
+          <p className="mt-2 text-xs text-[#9c6726]" role="status">
+            {p(job.stage)}
+          </p>
         </div>
         <button
           onClick={onCancel}
@@ -86,7 +89,7 @@ export function PlanningExperience({
           {p("cancel")}
         </button>
       </header>
-      <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_280px]">
+      <div className="space-y-4">
         <div className="min-w-0 overflow-hidden rounded-3xl border border-[#e8d6ba] bg-[#fffdf9] p-2 shadow-xl sm:p-3">
           <TempleVideoPlayer
             items={items}
@@ -108,12 +111,12 @@ export function PlanningExperience({
             }}
           />
         </div>
-        <div className="rounded-2xl border border-[#e8d6ba] bg-[#fffdf9] p-5">
+        <div className="rounded-2xl border border-[#e8d6ba] bg-[#fffdf9] p-4">
           <h2 className="font-serif text-xl">{active?.title || p("title")}</h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-[#796b5d]">
             {p("waitBody")}
           </p>
-          <ol className="mt-4 flex flex-wrap gap-2 lg:flex-col">
+          <ol className="mt-4 flex flex-wrap gap-2 ">
             {stages.map((s, i) => (
               <li
                 key={s}

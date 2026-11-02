@@ -148,7 +148,8 @@ def test_later_day_opening_not_silently_shifted(req):
     ts = temples(req)
     ts[0]["windows"][req.start_date.isoformat()] = []
     r = solve(req, ts, matrix(req.temple_ids))
-    assert r["feasible"] and len(r["days"]) == 2 and not r["days"][0]["items"]
+    assert not r["feasible"] and len(r["days"]) == 2 and not r["days"][0]["items"]
+    assert "DAY_UNPLANNED" in {e["code"] for e in r["conflicts"]}
 
 
 def test_infeasible_and_missing_route_never_drop_a_mandatory_stop(req):
@@ -240,41 +241,29 @@ def test_route_provider_units_and_outage(monkeypatch):
 
 
 def test_budget_explicit_units_missing_quotes_and_room_nights(req):
-    req = req.model_copy(
-        update={"days": 3, "adults": 3, "children": 1, "rooms": 2, "stay": "hotel"}
-    )
-    options = {
-        "hotels": [{"price_range": "₹1,000–₹2,000 per night"}],
-        "restaurants": [{"average_cost_for_one": 100}],
-    }
-    days = [{"items": [{"type": "travel", "distance_km": 20}]}]
-    b = evidence.calculate_budget(req, days, options)
-    components = {c["name"]: c for c in b["components"]}
-    assert components["food"]["low"] == 3 * 3 * 4 * 100
-    assert components["stay"]["low"] == 2 * 2 * 1000
-    assert components["stay"]["high"] == 2 * 2 * 2000
-    assert not b["complete"] and b["missing"]
-    bus = evidence.calculate_budget(
-        req.model_copy(update={"transport": "bus"}), days, options
-    )
-    assert not any(c["name"] == "vehicle_fuel" for c in bus["components"])
-    assert any("fares" in item for item in bus["missing"])
+    from app.planning.costing import calculate
+    req=req.model_copy(update={"days":3,"adults":3,"children":1,"rooms":2,"stay":"hotel","stay_mode":"overnight"})
+    hotel={"id":"H_FIXTURE","price_low":1000,"price_high":2000,"source_record":"TEST_FIXTURE"}
+    options={"hotels":[hotel],"restaurants":[],"selected_hotel":hotel}
+    days=[{"date":(req.start_date+timedelta(days=i)).isoformat(),"items":[]} for i in range(3)]
+    b=calculate(req,days,options,[])
+    stay=next(c for c in b['categories'] if c['category']=='stay')
+    assert stay['low']==2*2*1000 and stay['high']==2*2*2000
+    assert not b['complete'] and b['missing']
+    daily=calculate(req.model_copy(update={'stay_mode':'daily_return'}),days,options,[])
+    assert next(c for c in daily['categories'] if c['category']=='stay')['high']==0
+    bus=calculate(req.model_copy(update={'transport':'bus'}),days,options,[])
+    assert 'transport_fare' in bus['missing'] and bus['within_cap'] is None
 
 
 def test_diet_does_not_invent_jain_nonveg_and_options_bound_to_temple(req):
-    ts = evidence.catalog(req.temple_ids, req.start_date, 1)
-    for food in ["jain", "nonveg"]:
-        assert (
-            evidence.stay_food(req.model_copy(update={"food": food}), ts)["restaurants"]
-            == []
-        )
-    opts = evidence.stay_food(req.model_copy(update={"days": 2, "stay": "hotel"}), ts)
-    assert all(
-        o["temple_id"] in req.temple_ids for group in opts.values() for o in group
-    )
-    assert all(
-        o["availability"] == "unverified" for group in opts.values() for o in group
-    )
+    ts=evidence.catalog(req.temple_ids,req.start_date,1)
+    assert evidence.stay_food(req.model_copy(update={'food':'jain'}),ts)['restaurants']==[]
+    nonveg=evidence.stay_food(req.model_copy(update={'food':'nonveg'}),ts)['restaurants']
+    assert all(r['diet_evidence']=='nonveg' for r in nonveg)
+    opts=evidence.stay_food(req.model_copy(update={'days':2,'stay':'hotel'}),ts)
+    assert all(o['temple_id'] in req.temple_ids for group in ['hotels','restaurants'] for o in opts[group])
+    assert all(o['availability']=='unverified' for group in ['hotels','restaurants'] for o in opts[group])
 
 
 @pytest.fixture
@@ -283,6 +272,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("PLAN_SERVICE_SECRET", SECRET)
     monkeypatch.setenv("PLAN_INTENT_LLM", "false")
     monkeypatch.setattr(jobs, "POOL", SimpleNamespace(submit=lambda *args: None))
+    monkeypatch.setattr(evidence,"locate_options",lambda req,opts,places:opts)
     jobs.ACTIVE.clear()
     api._LIMITS.clear()
     app = FastAPI()
@@ -521,25 +511,25 @@ def test_intent_timeout_invalid_facts_and_no_keys_fall_back(req, monkeypatch):
     assert intent.understand("by bus", job)[1] == "deterministic"
 
 
-def test_requested_days_include_explicit_free_days_and_balanced_visits(req):
+def test_requested_days_without_activity_are_incomplete_not_success(req):
     req = req.model_copy(update={"days": 3})
     ts = temples(req)
     m = matrix(req.temple_ids)
     result = solve(req, ts, m)
-    assert result["feasible"] and len(result["days"]) == 3
+    assert not result["feasible"] and len(result["days"]) == 3
     assert sum(bool(d["items"]) for d in result["days"]) == 2
     assert result["days"][-1]["items"] == []
-    assert validate(req, ts, result, m) == []
+    assert 'DAY_UNPLANNED' in {e['code'] for e in validate(req,ts,result,m)}
 
 
-def test_known_budget_cap_precedes_leisure_balance(req):
+def test_daily_coverage_is_not_sacrificed_for_cheaper_empty_days(req):
     req = req.model_copy(update={"days": 2, "budget_cap": 300})
     ts = temples(req)
     m = matrix(req.temple_ids)
     # Two origin-return days are 40 km; a combined loop is 30 km.
     result = solve(req, ts, m)
     assert result["feasible"]
-    assert sum(bool(d["items"]) for d in result["days"]) == 1
+    assert sum(bool(d["items"]) for d in result["days"]) == 2
 
 
 def test_clock_rejects_invalid_values():

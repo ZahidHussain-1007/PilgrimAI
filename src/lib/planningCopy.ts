@@ -1,5 +1,7 @@
 import type { AppLanguage } from "./prefs";
+import { planningV21Copy } from "./planningV21Copy";
 const copy: Record<string, [string, string, string]> = {
+
   title: [
     "Your pilgrimage itinerary",
     "మీ తీర్థయాత్ర ప్రణాళిక",
@@ -489,6 +491,7 @@ const copy: Record<string, [string, string, string]> = {
     "రహదారి అంచనా మాత్రమే; సర్వీసులు, మార్పుల సమయాలు నిర్ధారించండి.",
     "सड़क अनुमान मात्र; सेवा और बदलाव का समय पुष्ट करें।",
   ],
+  ...planningV21Copy,
 };
 export function planningT(lang: AppLanguage, key: string) {
   return copy[key]?.[lang === "te" ? 1 : lang === "hi" ? 2 : 0] || key;

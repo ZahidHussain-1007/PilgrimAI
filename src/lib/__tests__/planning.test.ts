@@ -125,3 +125,64 @@ describe("real planning contracts", () => {
     );
   });
 });
+
+describe("date-only trip identity across viewer timezones", () => {
+  it.each([
+    "America/Los_Angeles",
+    "Pacific/Honolulu",
+    "UTC",
+    "Asia/Kolkata",
+    "Pacific/Kiritimati",
+  ])("Nov 4–5 remains Nov 4–5 in %s", async (tz) => {
+    const { formatPlanningDate } = await import("../planning");
+    const before = process.env.TZ;
+    process.env.TZ = tz;
+    try {
+      expect(formatPlanningDate("2026-11-04", "en")).toContain("4");
+      expect(formatPlanningDate("2026-11-04", "en")).toContain("Nov");
+      expect(formatPlanningDate("2026-11-05", "en")).toContain("5");
+      const j = {
+        ...job,
+        result: {
+          ...job.result,
+          days: ["2026-11-04", "2026-11-05"].map((date) => ({
+            date,
+            items: [{ title: "Temple", start: "07:00", end: "08:15" }],
+          })),
+        },
+      } as PlanningJob;
+      const ics = calendarText(j);
+      expect(ics).toContain("DTSTART:20261104T013000Z");
+      expect(ics).toContain("DTSTART:20261105T013000Z");
+      expect(ics).not.toContain("DTSTART:20261103");
+    } finally {
+      process.env.TZ = before;
+    }
+  });
+  it.each(["2026-02-30", "2026-11-04T00:00:00Z", "11/04/2026", "not-a-date"])(
+    "rejects non-calendar date %s",
+    async (value) => {
+      const { formatPlanningDate } = await import("../planning");
+      expect(() => formatPlanningDate(value)).toThrow();
+    },
+  );
+});
+
+describe("reported previous-day label regression", () => {
+  it("reproduces the old Nov 3 label without shifting the date-only identity", async () => {
+    const { formatPlanningDate } = await import("../planning");
+    const old = process.env.TZ;
+    process.env.TZ = "America/Los_Angeles";
+    try {
+      expect(
+        new Date("2026-11-04T12:00:00+05:30").toLocaleDateString("en-IN", {
+          day: "numeric",
+        }),
+      ).toBe("3");
+      expect(formatPlanningDate("2026-11-04", "en")).toContain("4");
+      expect(calendarText(job)).toContain("X-WR-TIMEZONE:Asia/Kolkata");
+    } finally {
+      process.env.TZ = old;
+    }
+  });
+});

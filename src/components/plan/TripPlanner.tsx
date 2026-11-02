@@ -160,6 +160,13 @@ export default function TripPlanner({
   const [visitMinutes, setVisitMinutes] = useState(75)
   const [restMinutes, setRestMinutes] = useState(15)
   const [allowEstimates, setAllowEstimates] = useState(false)
+  const [stayMode,setStayMode]=useState("daily_return")
+  const [avoidClimbing,setAvoidClimbing]=useState(false)
+  const [travelLimit,setTravelLimit]=useState("")
+  const [trafficBuffer,setTrafficBuffer]=useState(15)
+  const [parkingBuffer,setParkingBuffer]=useState(10)
+  const [mealMinutes,setMealMinutes]=useState(60)
+  const [allowances,setAllowances]=useState<Record<string,string>>({})
   const [includeAttractions, setIncludeAttractions] = useState(false)
 
   const total = Number(people)
@@ -175,7 +182,9 @@ export default function TripPlanner({
     setPlanning(true)
     try {
       const job = await planningFetch<PlanningJob>("jobs", { method: "POST", body: JSON.stringify({
-        temple_ids: selected.map(tm => tm.templeId), origin, start_date: date, days: Number(days),
+        temple_ids: selected.map(tm => tm.templeId), primary_temple_id: temple.templeId, timezone:"Asia/Kolkata", stay_mode:stayMode, avoid_climbing:avoidClimbing,
+        daily_travel_limit_minutes:travelLimit ? Number(travelLimit):null, traffic_buffer_percent:trafficBuffer, parking_buffer_minutes:parkingBuffer, meal_minutes:mealMinutes,
+        ...Object.fromEntries(Object.entries(allowances).map(([key,value])=>[key,value.trim() ? {low:Number(value),high:Number(value)}:null])), origin, start_date: date, days: Number(days),
         departure, finish, budget_cap: budgetCap ? Number(budgetCap) : null,
         adults, children, elderly, transport, stay, food, special,
         budget_tier: budget === "premium" ? "high" : budget, rooms, visit_minutes: visitMinutes,
@@ -183,7 +192,7 @@ export default function TripPlanner({
         language: lang, allow_estimates: allowEstimates,
       }) })
       try { localStorage.setItem("pilgrim:active_plan", job.id) } catch {}
-      router.push("/itinerary/" + job.id)
+      router.push("/planning/" + job.id)
     } catch (error) { setPlanError(error instanceof Error ? error.message : p("failure")); setPlanning(false) }
   }
 
@@ -687,7 +696,21 @@ export default function TripPlanner({
             <label className="flex gap-2 text-xs leading-5 sm:col-span-2"><input type="checkbox" checked={includeAttractions} onChange={e=>setIncludeAttractions(e.target.checked)}/>{p("include")}</label>
           </fieldset>
 
-          <p className="mt-4 text-xs leading-5 text-[#796b5d]">{p("baseNotice")}</p>
+          <fieldset className="mt-5 grid gap-4 rounded-2xl border border-[#e9d8c1] p-4 sm:grid-cols-2">
+            <legend className="px-2 font-serif font-semibold">{p("stay_mode")}</legend>
+            <label className="text-sm sm:col-span-2">{p("stay_mode")}<select aria-label={p("stay_mode")} className={inputCls} value={stayMode} onChange={e=>setStayMode(e.target.value)}><option value="daily_return">{p("daily_return")}</option><option value="overnight">{p("overnight")}</option></select></label>
+            <p className="text-xs leading-5 text-[#796b5d] sm:col-span-2">{stayMode==='overnight'?p("overnightHelp"):p("hotel_not_needed_daily_return")}</p>
+            <label className="flex gap-2 text-sm sm:col-span-2"><input type="checkbox" checked={avoidClimbing} onChange={e=>setAvoidClimbing(e.target.checked)}/>{p("avoid_climbing")}</label>
+            <label className="text-sm">{p("daily_travel_limit_minutes")}<input type="number" min="30" max="840" className={inputCls} value={travelLimit} onChange={e=>setTravelLimit(e.target.value)}/></label>
+            <label className="text-sm">{p("traffic_buffer_percent")}<input type="number" required min="0" max="100" className={inputCls} value={trafficBuffer} onChange={e=>setTrafficBuffer(Number(e.target.value))}/></label>
+            <label className="text-sm">{p("parking_buffer_minutes")}<input type="number" required min="0" max="60" className={inputCls} value={parkingBuffer} onChange={e=>setParkingBuffer(Number(e.target.value))}/></label>
+            <label className="text-sm">{p("meal_minutes")}<input type="number" required min="45" max="90" className={inputCls} value={mealMinutes} onChange={e=>setMealMinutes(Number(e.target.value))}/></label>
+          </fieldset>
+          <details className="mt-4 rounded-2xl border border-[#e9d8c1] p-4">
+            <summary className="cursor-pointer font-semibold text-[#9c5e19]">{p("allowances")}</summary>
+            <p className="my-3 text-xs leading-5 text-[#796b5d]">{p("allowanceHelp")}</p>
+            <div className="grid gap-3 sm:grid-cols-2">{["meal_price_per_person","tolls_per_day","parking_per_visit","miscellaneous_per_day"].map(key=><label key={key} className="text-sm">{p(key)}<input type="number" min="0" max="10000000" className={inputCls} value={allowances[key]||""} onChange={e=>setAllowances({...allowances,[key]:e.target.value})}/></label>)}</div>
+          </details>
           {/* primary action */}
           <button
             type="submit"

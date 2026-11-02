@@ -6,9 +6,34 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+class PriceAllowance(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    low: float = Field(ge=0, le=10000000)
+    high: float = Field(ge=0, le=10000000)
+
+    @model_validator(mode="after")
+    def ordered(self):
+        if self.low > self.high:
+            raise ValueError("Upper price must not be below lower price.")
+        return self
+
+
 class PlanRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     temple_ids: list[str] = Field(min_length=1, max_length=23)
+    primary_temple_id: str | None = None
+    timezone: Literal["Asia/Kolkata"] = "Asia/Kolkata"
+    stay_mode: Literal["daily_return", "overnight"] = "daily_return"
+    hotel_id: str | None = Field(default=None, max_length=100)
+    avoid_climbing: bool = False
+    traffic_buffer_percent: float = Field(default=15, ge=0, le=100)
+    parking_buffer_minutes: int = Field(default=10, ge=0, le=60)
+    meal_minutes: int = Field(default=60, ge=45, le=90)
+    daily_travel_limit_minutes: int | None = Field(default=None, ge=30, le=840)
+    meal_price_per_person: PriceAllowance | None = None
+    tolls_per_day: PriceAllowance | None = None
+    parking_per_visit: PriceAllowance | None = None
+    miscellaneous_per_day: PriceAllowance | None = None
     origin: str = Field(min_length=2, max_length=160)
     start_date: date
     days: int = Field(default=1, ge=1, le=7)
@@ -36,6 +61,14 @@ class PlanRequest(BaseModel):
     @model_validator(mode="after")
     def coherent(self):
         self.origin = self.origin.strip()
+        if self.primary_temple_id is None:
+            self.primary_temple_id = self.temple_ids[0]
+        if self.primary_temple_id not in self.temple_ids:
+            raise ValueError("Primary temple must remain selected.")
+        if self.stay_mode == "overnight" and (self.days < 2 or self.stay == "none"):
+            raise ValueError(
+                "Overnight travel requires at least two days and an accommodation preference."
+            )
         if len(self.origin) < 2 or len(set(self.temple_ids)) != len(self.temple_ids):
             raise ValueError("Choose distinct temples and a real starting point.")
         if any(not __import__("re").fullmatch(r"T\d{4}", x) for x in self.temple_ids):

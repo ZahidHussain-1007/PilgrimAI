@@ -15,7 +15,7 @@ from threading import BoundedSemaphore, RLock
 
 from . import evidence
 from .models import PlanRequest
-from .solver import solve
+from . import discovery, engine
 
 ROOT = Path(__file__).resolve().parents[3] / ".planning-runtime"
 LOCK = RLock()
@@ -169,110 +169,134 @@ def _run(job_id, owner):
     try:
         job = _stage(job_id, owner, "temples")
         req = PlanRequest.model_validate(job["request"])
-        temples = evidence.catalog(req.temple_ids, req.start_date, req.days)
+        # Independent origin lookup and local temple/calendar evidence retrieval.
+        with ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="planning-retrieval"
+        ) as retrieval:
+            origin_future = retrieval.submit(evidence.origin_point, req.origin)
+            temples = evidence.catalog(req.temple_ids, req.start_date, req.days)
+            candidates, classifications = discovery.discover(req, temples)
+            _stage(job_id, owner, "stay_food")
+            options = evidence.stay_food(req, temples + candidates)
+            options = evidence.locate_options(req, options, temples + candidates)
+            origin = origin_future.result()
         _stage(job_id, owner, "routes")
-        origin = evidence.origin_point(req.origin)
-        matrix = evidence.route_matrix([origin] + temples, req.allow_estimates)
-        _stage(job_id, owner, "stay_food")
-        options = evidence.stay_food(req, temples)
+        hotels = engine.hotel_candidates(req, options)
+        located_food = [
+            r for r in options.get("restaurants", []) if r.get("lat") is not None
+        ][:3]
+        points = [origin] + temples + candidates + hotels + located_food
+        matrix = engine.buffered_routes(
+            req, evidence.route_matrix(points, req.allow_estimates)
+        )
         _stage(job_id, owner, "schedule")
-        fixed_cost = evidence.calculate_budget(req, [], options)["high"]
-        schedule = solve(req, temples, matrix, known_fixed_cost=fixed_cost)
-        _stage(job_id, owner, "budget")
-        cost = evidence.calculate_budget(req, schedule["days"], options)
-        _stage(job_id, owner, "validate")
+        schedule, cost, classifications = engine.plan(
+            req,
+            temples,
+            candidates,
+            classifications,
+            matrix,
+            options,
+            origin,
+            progress=lambda stage: _stage(job_id, owner, stage),
+        )
+        hotel = options.get("selected_hotel")
+        if hotel:
+            leg = matrix.get(hotel["id"] + ">" + req.primary_temple_id, {})
+            hotel["distance_to_primary_km"] = leg.get("km")
+            hotel["distance_source"] = leg.get("source")
         warnings = [
-            "Catalog hours and charges are not live availability. Confirm date-specific changes with the temple.",
-            "Visit length includes a user-selected planning allowance, not a measured queue forecast.",
-            schedule.get(
-                "base_policy", "Each day is a return journey to the supplied origin."
-            ),
-            "Hotel, meal and nearby-attraction listings are options; their transfers/opening times are not scheduled or confirmed.",
+            "Catalog hours, fees, meal prices and hotel listings are not live availability; confirm date-specific changes.",
+            "Visit and queue duration is a planning allowance, not a crowd prediction.",
+            "Road times are OSRM estimates without live traffic; configurable traffic and parking buffers are added.",
+            "Anonymous meal breaks are reserved time, not a confirmed restaurant visit. Named venues require coordinates, both road transfers and dated opening windows.",
+            "Unknown prices are excluded from the displayed subtotal; it is not a maximum trip price.",
         ]
-        if any(r["estimated"] for r in matrix.values()):
+        if req.stay_mode == "daily_return" and req.stay != "none":
             warnings.append(
-                "Some routes are unavailable or straight-line scenarios; do not treat them as verified road times."
-            )
-        if req.transport in {"bus", "train"}:
-            warnings.append(
-                "Timeline uses a road-based scenario, NOT a bus/train timetable. Confirm service, boarding point, transfers and fares before travel."
-            )
-        if req.transport == "taxi":
-            warnings.append(
-                "Taxi availability and fare are unverified; obtain a quote."
+                "Daily return selected: hotel discoveries are not used or charged."
             )
         if req.special != "none" or req.elderly:
             warnings.append(
-                "Accessibility / medical suitability is not certified. Contact each venue; extra visit time alone does not prove access."
+                "Catalog accessibility notes are not an accessibility or medical-suitability certification."
             )
-        if req.food in {"jain", "nonveg"}:
+        if any(
+            i.get("estimated")
+            for d in schedule["days"]
+            for i in d["items"]
+            if i["type"] == "travel"
+        ):
             warnings.append(
-                "No verified matching dietary options are returned by this adapter. Confirm directly; unknown diet is not a match."
+                "Selected route uses explicitly allowed straight-line scenarios, not verified road times."
             )
-        if req.include_attractions:
+        if req.transport != "car":
             warnings.append(
-                "Nearby attractions are listed with map links but not inserted into the timed route; their hours and visit duration need confirmation."
+                "Public transport/taxi availability and fares require confirmation; road timing is not a published service timetable."
             )
-        if req.days > 1 and req.stay != "none":
+        if not cost["complete"]:
             warnings.append(
-                "Accommodation category, room capacity, nightly availability and hotel transfers require confirmation. Daily routing still uses your origin as base."
+                "Budget is partial; unresolved categories are listed explicitly."
             )
-        if cost["within_cap"] is False:
-            schedule["conflicts"].append(
-                {
-                    "code": "KNOWN_COSTS_EXCEED_CAP",
-                    "details": [str(cost["high"]), str(req.budget_cap)],
-                }
-            )
-        elif req.budget_cap is not None and not cost["complete"]:
-            schedule["conflicts"].append(
-                {"code": "BUDGET_NOT_FULLY_PRICED", "details": cost["missing"]}
-            )
-        if req.special in {"wheel", "medical"}:
-            schedule["conflicts"].append(
-                {
-                    "code": "ACCESS_REQUIREMENTS_UNVERIFIED",
-                    "details": ["Contact the venues before accepting this draft."],
-                }
-            )
-        if req.transport in {"bus", "train"}:
-            schedule["conflicts"].append(
-                {
-                    "code": "SERVICE_TIMETABLE_UNVERIFIED",
-                    "details": [
-                        "Road scenario only; confirm services and transfer times."
-                    ],
-                }
-            )
-        if schedule["conflicts"]:
-            schedule["feasible"] = False
         result = {
             **schedule,
+            "schema_version": 21,
             "request": req.model_dump(mode="json"),
             "temples": temples,
+            "destinations": temples + candidates,
+            "attractions": classifications,
+            "origin": origin,
             "routes": matrix,
             "options": options,
             "budget": cost,
             "warnings": warnings,
             "title": " → ".join(t["name"] for t in temples),
-            "timezone": "Asia/Kolkata",
+            "timezone": req.timezone,
+            "date_contract": {
+                "requested_dates": engine.requested_dates(req),
+                "start_date": req.start_date.isoformat(),
+                "end_date": engine.requested_dates(req)[-1],
+                "timezone": req.timezone,
+            },
             "review_required": True,
             "agent_trace": [
-                {"agent": a, "mode": m}
-                for a, m in [
-                    ("temple", "catalog evidence"),
-                    ("travel", "OSRM matrix / explicit estimates"),
+                {"agent": agent, "mode": mode}
+                for agent, mode in [
+                    (
+                        "temple",
+                        "catalog facts/source/last-verified; primary is mandatory",
+                    ),
+                    (
+                        "discovery",
+                        "rank bounded catalog candidates; unresolved prose remains optional",
+                    ),
+                    (
+                        "travel",
+                        "origin retrieval parallel with catalog; deduplicated bounded OSRM matrix; explicit buffers",
+                    ),
+                    ("calendar", "source-pinned dated windows; whole visit must fit"),
                     (
                         "accommodation",
-                        "catalog normalization and hard-constraint filter",
+                        "existing normalization; separate discovery/match/availability/booking; no capacity assumption",
                     ),
-                    ("restaurant", "catalog dietary filter"),
-                    ("calendar", "catalog window extraction"),
-                    ("itinerary", "bounded deterministic beam search"),
-                    ("budget", "existing money parser + explicit-unit arithmetic"),
+                    (
+                        "restaurant",
+                        "existing normalization; diet/windows/prices; named venue requires both road transfers",
+                    ),
+                    (
+                        "itinerary",
+                        "bounded candidate combinations and deterministic beam search",
+                    ),
+                    (
+                        "budget",
+                        "eight-category day-wise unit ledger; selected activities only; unknowns excluded",
+                    ),
                     (
                         "validator",
-                        "independent dates/route continuity/leg totals/windows/coverage/meals/rest checks",
+                        "independent acceptance gate; rejected candidates trigger bounded retry; critical errors cannot complete",
+                    ),
+                    (
+                        "composition",
+                        "deterministic structured response; no LLM-generated times",
                     ),
                 ]
             ],

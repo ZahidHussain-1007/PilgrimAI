@@ -210,7 +210,7 @@ def chat(job_id: str, body: RevisionRequest, principal=Depends(owner)):
         elif section == "options":
             parts["options"] = result["options"]
         elif section == "nearby":
-            parts["nearby"] = [
+            parts["nearby"] = result.get('attractions') or [
                 {"name": t["name"], "places": t["nearby"]} for t in matched
             ]
         elif section == "temples":

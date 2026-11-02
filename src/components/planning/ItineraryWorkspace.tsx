@@ -10,9 +10,18 @@ import {
   platformLinks,
   safeUrl,
   calendarText,
+  formatPlanningDate,
   type PlanningJob,
   type PlanningRequest,
 } from "../../lib/planning";
+import {
+  PlanOverview,
+  DailyRoute,
+  BudgetSummary,
+  DiscoveryCards,
+  AttractionSelection,
+  TempleInformation,
+} from "./PlanSummary";
 import { PlanningExperience } from "./PlanningExperience";
 
 const box = "rounded-2xl border border-[#e8d9c2] bg-[#fffdf9] p-5";
@@ -167,7 +176,7 @@ export function ItineraryWorkspace({
         setMessages((m) => [...m, { role: "assistant", text: p("proposal") }]);
       } else if (response.kind === "revision" && response.job) {
         setProposal(null);
-        router.push("/itinerary/" + response.job.id);
+        router.push("/planning/" + response.job.id);
       } else {
         setMessages((m) => [
           ...m,
@@ -281,9 +290,27 @@ export function ItineraryWorkspace({
         <section className={box + " border-[#c87543]"} role="alert">
           <h2 className="font-serif text-xl">{p("conflicts")}</h2>
           <p className="mt-2 text-sm leading-6">{p("conflictHelp")}</p>
-          <Facts value={result.conflicts} />
+          <ul className="mt-3 list-disc space-y-2 pl-5 text-sm">
+            {result.conflicts.map((e, i) => (
+              <li key={i}>
+                {p(e.code) === e.code ? p("validationIssue") : p(e.code)}
+              </li>
+            ))}
+          </ul>
         </section>
       )}
+      {!result.schema_version && (
+        <section className={box} role="alert">
+          <p>{p("legacyNotice")}</p>
+          <button
+            className={button + " mt-3"}
+            onClick={() => void ask({ stay_mode: "daily_return" })}
+          >
+            {p("replan")}
+          </button>
+        </section>
+      )}
+      <PlanOverview job={job} onAlternative={(changes) => void ask(changes)} />
       <section className={box}>
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="mr-auto font-serif text-xl">{p("timeline")}</h2>
@@ -303,10 +330,7 @@ export function ItineraryWorkspace({
               key={d.date}
               onClick={() => setDay(i)}
             >
-              {new Date(d.date + "T12:00:00+05:30").toLocaleDateString(
-                lang === "te" ? "te-IN" : lang === "hi" ? "hi-IN" : "en-IN",
-                { weekday: "short", day: "numeric", month: "short" },
-              )}
+              {formatPlanningDate(d.date, lang)}
             </button>
           ))}
         </nav>
@@ -331,7 +355,7 @@ export function ItineraryWorkspace({
           </div>
         )}
         {selectedDay?.items.length === 0 && (
-          <p className="py-6 text-sm text-[#796b5d]">{p("freeDay")}</p>
+          <p className="py-6 text-sm text-[#796b5d]">{p("unplannedDay")}</p>
         )}
         <ol className="space-y-3">
           {selectedDay?.items.map((item, i) => (
@@ -342,12 +366,50 @@ export function ItineraryWorkspace({
               <div className="min-w-0 flex-1">
                 <h3 className="font-semibold">{p(item.title)}</h3>
                 <p className="mt-1 text-xs text-[#796b5d]">
+                  {item.meal ? p(item.meal) + " · " : ""}
                   {item.duration_minutes} min
                   {item.distance_km !== undefined
                     ? ` · ${item.distance_km} km`
                     : ""}
                   {item.source ? " · " + item.source : ""}
                 </p>
+                {item.type === "meal" && (
+                  <p className="mt-2 text-xs text-[#796b5d]">
+                    {item.place_id ? item.venue : p("unconfirmed")}
+                  </p>
+                )}
+                {item.verification && (
+                  <p className="mt-1 text-xs text-[#796b5d]">
+                    {p(item.verification)}
+                  </p>
+                )}
+                {item.from_id && (
+                  <p className="mt-1 text-xs text-[#796b5d]">
+                    {item.from_id === "origin"
+                      ? job.request.origin
+                      : (result.destinations || result.temples).find(
+                          (t) => t.id === item.from_id,
+                        )?.name ||
+                        String(
+                          result.options.hotels
+                            .concat(result.options.restaurants)
+                            .find((t) => t.id === item.from_id)?.name ||
+                            item.from_id,
+                        )}{" "}
+                    →{" "}
+                    {item.to_id === "origin"
+                      ? job.request.origin
+                      : (result.destinations || result.temples).find(
+                          (t) => t.id === item.to_id,
+                        )?.name ||
+                        String(
+                          result.options.hotels
+                            .concat(result.options.restaurants)
+                            .find((t) => t.id === item.to_id)?.name ||
+                            item.to_id,
+                        )}
+                  </p>
+                )}
                 {safeUrl(item.url) && (
                   <a
                     href={safeUrl(item.url)}
@@ -362,35 +424,9 @@ export function ItineraryWorkspace({
             </li>
           ))}
         </ol>
+        {selectedDay && <DailyRoute day={selectedDay} />}
       </section>
-      <section className={box}>
-        <h2 className="font-serif text-xl">{p("budgetTitle")}</h2>
-        <p className="mt-2 text-sm">
-          {p("total")}:{" "}
-          <strong>
-            ₹{result.budget.low.toLocaleString("en-IN")}–₹
-            {result.budget.high.toLocaleString("en-IN")}
-          </strong>
-        </p>
-        {result.budget.components.map((c) => (
-          <div key={c.name} className="mt-3 rounded-xl bg-[#faf5ec] p-3">
-            <p className="font-semibold">
-              {p(c.name)} · ₹{c.low}–₹{c.high}
-            </p>
-            <p className="text-xs leading-5 text-[#796b5d]">
-              {p(
-                c.name === "vehicle_fuel"
-                  ? "fuelBasis"
-                  : c.name === "food"
-                    ? "foodBasis"
-                    : "stayBasis",
-              )}
-            </p>
-          </div>
-        ))}
-        <h3 className="mt-4 font-semibold">{p("missing")}</h3>
-        <Facts value={result.budget.missing} />
-      </section>
+      <BudgetSummary job={job} />
       <section className={box}>
         <h2 className="font-serif text-xl">{p("links")}</h2>
         <p className="my-3 text-sm leading-6 text-[#796b5d]">
@@ -421,84 +457,37 @@ export function ItineraryWorkspace({
             ))}
         </div>
       </section>
-      <section className={box}>
-        <h2 className="font-serif text-xl">{p("options")}</h2>
-        {["hotels", "restaurants"].map((key) => (
-          <div key={key} className="mt-4 grid gap-3 sm:grid-cols-2">
-            {result.options[key as "hotels" | "restaurants"].map((o, i) => (
-              <div key={i} className="min-w-0 rounded-xl bg-[#faf5ec] p-4">
-                <h3 className="font-semibold">{String(o.name || "")}</h3>
-                <p className="my-2 text-xs">
-                  {String(o.price_range || "")} · {p("unknown")}
-                </p>
-                {safeUrl(o.maps_url) && (
-                  <a
-                    href={safeUrl(o.maps_url)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm underline"
-                  >
-                    Google Maps ↗
-                  </a>
-                )}
-                {Boolean(o.booking_links) &&
-                  typeof o.booking_links === "object" && (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {Object.entries(o.booking_links || {}).map(
-                        ([name, url]) =>
-                          safeUrl(url) && (
-                            <a
-                              key={name}
-                              href={safeUrl(url)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-xs underline"
-                            >
-                              {name} ↗
-                            </a>
-                          ),
-                      )}
-                    </div>
-                  )}
-              </div>
-            ))}
-          </div>
-        ))}
-      </section>
-      {job.request.include_attractions && (
-        <section className={box}>
-          <h2 className="font-serif text-xl">{p("nearby")}</h2>
-          {result.temples.map((tm) => (
-            <div key={tm.id} className="mt-4">
-              <h3 className="font-semibold">{tm.name}</h3>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {tm.nearby.map((n) => (
-                  <a
-                    key={n.name}
-                    href={safeUrl(n.url)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={button}
-                  >
-                    {n.name} ↗
-                  </a>
-                ))}
-              </div>
-            </div>
-          ))}
-        </section>
-      )}
+      <TempleInformation job={job} />
+      <DiscoveryCards job={job} />
+      {job.request.include_attractions && <AttractionSelection job={job} />}
       <details className={box}>
         <summary className="cursor-pointer font-serif text-xl">
-          {p("details")}
+          {p("rawEvidence")}
         </summary>
-        {result.temples.map((tm) => (
-          <section className="mt-5 border-t border-[#e8d9c2] pt-4" key={tm.id}>
-            <h3 className="mb-3 font-serif text-xl">{tm.name}</h3>
-            <p className="mb-3 text-sm text-[#796b5d]">{tm.hours_basis}</p>
-            <Facts value={tm.facts} />
-          </section>
-        ))}
+        {(result.destinations || result.temples)
+          .filter(
+            (tm) =>
+              job.request.temple_ids.includes(tm.id) ||
+              result.days.some((d) =>
+                d.items.some((i) => i.place_id === tm.id),
+              ),
+          )
+          .map((tm) => (
+            <section
+              className="mt-5 border-t border-[#e8d9c2] pt-4"
+              key={tm.id}
+            >
+              <h3 className="mb-3 font-serif text-xl">{tm.name}</h3>
+              <p className="mb-3 text-sm text-[#796b5d]">{tm.hours_basis}</p>
+              <p className="mb-3 text-xs text-[#796b5d]">
+                {p("lastVerified")}:{" "}
+                {tm.last_verified ||
+                  String(tm.facts.last_verified || p("unknown"))}{" "}
+                · {p("catalog_not_live")}
+              </p>
+              <Facts value={tm.facts} />
+            </section>
+          ))}
       </details>
       <details className={box}>
         <summary className="cursor-pointer font-serif text-xl">
@@ -662,7 +651,14 @@ export function ItineraryWorkspace({
                 </label>
               ))}
               {(
-                ["transport", "stay", "food", "special", "budget_tier"] as const
+                [
+                  "transport",
+                  "stay",
+                  "stay_mode",
+                  "food",
+                  "special",
+                  "budget_tier",
+                ] as const
               ).map((key) => (
                 <label key={key}>
                   {p(key)}
@@ -675,13 +671,15 @@ export function ItineraryWorkspace({
                   >
                     {(key === "transport"
                       ? ["car", "bus", "train", "taxi"]
-                      : key === "stay"
-                        ? ["none", "hotel", "guest", "dham"]
-                        : key === "food"
-                          ? ["veg", "nonveg", "jain", "any"]
-                          : key === "special"
-                            ? ["none", "wheel", "elder", "medical"]
-                            : ["low", "mid", "high"]
+                      : key === "stay_mode"
+                        ? ["daily_return", "overnight"]
+                        : key === "stay"
+                          ? ["none", "hotel", "guest", "dham"]
+                          : key === "food"
+                            ? ["veg", "nonveg", "jain", "any"]
+                            : key === "special"
+                              ? ["none", "wheel", "elder", "medical"]
+                              : ["low", "mid", "high"]
                     ).map((v) => (
                       <option key={v} value={v}>
                         {p(v)}
@@ -690,12 +688,124 @@ export function ItineraryWorkspace({
                   </select>
                 </label>
               ))}
+              {(
+                [
+                  "traffic_buffer_percent",
+                  "parking_buffer_minutes",
+                  "meal_minutes",
+                  "daily_travel_limit_minutes",
+                ] as const
+              ).map((key) => (
+                <label key={key} className="text-sm">
+                  {p(key)}
+                  <input
+                    className="mt-1 block w-full rounded-xl border border-[#dfcaab] p-2"
+                    type="number"
+                    min={
+                      key === "meal_minutes"
+                        ? 45
+                        : key === "daily_travel_limit_minutes"
+                          ? 30
+                          : 0
+                    }
+                    max={
+                      key === "traffic_buffer_percent"
+                        ? 100
+                        : key === "parking_buffer_minutes"
+                          ? 60
+                          : key === "meal_minutes"
+                            ? 90
+                            : 840
+                    }
+                    value={
+                      draft[key] ??
+                      (key === "meal_minutes"
+                        ? 60
+                        : key === "parking_buffer_minutes"
+                          ? 10
+                          : key === "traffic_buffer_percent"
+                            ? 15
+                            : "")
+                    }
+                    onChange={(e) =>
+                      setDraft({
+                        ...draft,
+                        [key]:
+                          e.target.value === "" ? null : Number(e.target.value),
+                      })
+                    }
+                  />
+                </label>
+              ))}
+              {(
+                [
+                  "meal_price_per_person",
+                  "tolls_per_day",
+                  "parking_per_visit",
+                  "miscellaneous_per_day",
+                ] as const
+              ).map((key) => (
+                <label key={key} className="text-sm">
+                  {p(key)}
+                  <input
+                    className="mt-1 block w-full rounded-xl border border-[#dfcaab] p-2"
+                    type="number"
+                    min="0"
+                    max="10000000"
+                    value={draft[key]?.high ?? ""}
+                    onChange={(e) =>
+                      setDraft({
+                        ...draft,
+                        [key]:
+                          e.target.value === ""
+                            ? null
+                            : {
+                                low: Number(e.target.value),
+                                high: Number(e.target.value),
+                              },
+                      })
+                    }
+                  />
+                </label>
+              ))}
+              <label className="text-sm">
+                {p("primary")}
+                <select
+                  className="mt-1 block w-full rounded-xl border border-[#dfcaab] p-2"
+                  value={draft.primary_temple_id || draft.temple_ids[0]}
+                  onChange={(e) =>
+                    setDraft({ ...draft, primary_temple_id: e.target.value })
+                  }
+                >
+                  {temples
+                    .filter((t) => draft.temple_ids.includes(t.templeId))
+                    .map((t) => (
+                      <option key={t.templeId} value={t.templeId}>
+                        {t.name}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <label className="text-sm">
+                <input
+                  type="checkbox"
+                  checked={draft.avoid_climbing || false}
+                  onChange={(e) =>
+                    setDraft({ ...draft, avoid_climbing: e.target.checked })
+                  }
+                />{" "}
+                {p("avoid_climbing")}
+              </label>
               <div className="sm:col-span-2 flex flex-wrap gap-3">
                 {temples.map((tm) => (
                   <label key={tm.templeId} className="text-xs">
                     <input
                       type="checkbox"
                       checked={draft.temple_ids.includes(tm.templeId)}
+                      disabled={
+                        tm.templeId ===
+                        (draft.primary_temple_id || draft.temple_ids[0])
+                      }
                       onChange={(e) =>
                         setDraft({
                           ...draft,

@@ -69,11 +69,25 @@ def fallback(message, request):
             False,
         ),
         (r"no hotel|without stay", "stay", "none"),
+        (
+            r"return home daily|daily return|ప్రతి రోజూ తిరుగు|हर दिन लौट",
+            "stay_mode",
+            "daily_return",
+        ),
+        (r"stay overnight|overnight stay|రాత్రి బస|रात रुक", "stay_mode", "overnight"),
+        (r"avoid climbing|no climbing|ఎక్కడం వద్దు|चढ़ाई नहीं", "avoid_climbing", True),
+        (
+            r"include attractions|add sightseeing|సందర్శనలు చేర్చు|दर्शनीय स्थल जोड़",
+            "include_attractions",
+            True,
+        ),
         (r"by bus|use bus|బస్సు|बस से", "transport", "bus"),
         (r"by car|use car", "transport", "car"),
     ]:
         if re.search(pattern, text):
             changes[key] = value
+    if changes.get("stay") == "none":
+        changes["stay_mode"] = "daily_return"
     if re.search(r"more rest|relax|విశ్రాంతి|आराम", text):
         changes.update(rest_minutes=30, visit_minutes=100)
     for section, words in [
