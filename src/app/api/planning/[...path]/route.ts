@@ -166,9 +166,11 @@ async function proxy(request: Request, ctx: Context) {
         ? data
         : {
             error:
-              typeof data.detail === "string"
-                ? data.detail
-                : JSON.stringify(data.detail || "Planning request failed."),
+              response.status === 422
+                ? "validationFailure"
+                : typeof data.detail === "string"
+                  ? data.detail
+                  : JSON.stringify(data.detail || "Planning request failed."),
           },
       { status: response.status },
     );

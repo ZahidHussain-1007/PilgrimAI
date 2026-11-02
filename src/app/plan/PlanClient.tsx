@@ -1,12 +1,14 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect,useState } from "react"
 import { useT } from "../../lib/i18n"
 import type { TempleSummary } from "../../lib/temples"
 import { TempleTrail } from "../../components/plan/TempleTrail"
 import { DiscoveryChat } from "../../components/plan/DiscoveryChat"
 import { TempleBrowser } from "../../components/plan/TempleBrowser"
 import TempleFinder from "../../components/plan/TempleFinder"
+import {EDIT_REQUEST} from "../../lib/planningSubmission"
+import type {PlanningRequest} from "../../lib/planning"
 import TripPlanner from "../../components/plan/TripPlanner"
 
 type View = "discover" | "find" | "trip"
@@ -14,6 +16,20 @@ type View = "discover" | "find" | "trip"
 export function PlanClient({ temples: ALL }: { temples: TempleSummary[] }) {
   const { t } = useT()
   const [view, setView] = useState<View>("discover")
+  const [restore, setRestore] = useState<PlanningRequest | null>(null);
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(EDIT_REQUEST);
+      if (!raw) return;
+      const r = JSON.parse(raw) as PlanningRequest;
+      if (!Array.isArray(r.temple_ids)) return;
+      setRestore(r);
+      setSelected(r.temple_ids);
+      setInitial(r.primary_temple_id || r.temple_ids[0]);
+      setView("trip");
+      sessionStorage.removeItem(EDIT_REQUEST);
+    } catch {}
+  }, []);
   const [selected, setSelected] = useState<string[]>([])
   // Yadadri (T0001) is the deterministic reference/featured state — display
   // default only; any marker click replaces it, nothing is persisted.
@@ -64,6 +80,7 @@ export function PlanClient({ temples: ALL }: { temples: TempleSummary[] }) {
       ALL[0]
     return (
       <TripPlanner
+        initialRequest={restore}
         temple={primary}
         selectedTemples={ALL.filter((tm) => selected.includes(tm.templeId))}
         onBack={() => {

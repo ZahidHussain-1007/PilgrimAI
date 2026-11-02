@@ -1,9 +1,17 @@
-import type { NextConfig } from "next"
+import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   agentRules: false,
   devIndicators: false,
-  allowedDevOrigins: ["localhost", "127.0.0.1", "*.e2b.app"],
-}
+  allowedDevOrigins: [
+    "localhost",
+    "127.0.0.1",
+    "*.e2b.app",
+    ...(process.env.PILGRIM_DEV_ORIGINS || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  ],
+};
 
-export default nextConfig
+export default nextConfig;

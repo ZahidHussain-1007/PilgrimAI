@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
-import { planningFetch, type PlanningJob } from "../../lib/planning"
+import type { PlanningRequest } from "../../lib/planning"
+import { stageSubmission,previewJob,cancelSubmission } from "../../lib/planningSubmission"
+import {PlanningExperience} from "../planning/PlanningExperience"
 import { planningT } from "../../lib/planningCopy"
 import type { TempleSummary } from "../../lib/temples"
 import { youtubeVideoId } from "../../lib/youtube"
@@ -85,9 +87,11 @@ export default function TripPlanner({
   temple,
   selectedTemples,
   onBack,
+  initialRequest,
 }: {
   temple: TempleSummary
   selectedTemples?: TempleSummary[]
+  initialRequest?:PlanningRequest|null
   onBack: () => void
 }) {
   const { t, lang } = useT()
@@ -152,6 +156,7 @@ export default function TripPlanner({
   const [special, setSpecial] = useState("none")
   const [prefsOpen, setPrefsOpen] = useState(true)
   const [planning, setPlanning] = useState(false)
+  const [pending,setPending]=useState<{request:PlanningRequest;id:string}|null>(null)
   const [planError, setPlanError] = useState("")
   const [departure, setDeparture] = useState("07:00")
   const [finish, setFinish] = useState("21:00")
@@ -169,6 +174,58 @@ export default function TripPlanner({
   const [allowances,setAllowances]=useState<Record<string,string>>({})
   const [includeAttractions, setIncludeAttractions] = useState(false)
 
+  useEffect(() => {
+    const r = initialRequest;
+    if (!r) return;
+    setOrigin(r.origin);
+    setDate(r.start_date);
+    setDays(String(r.days));
+    setBudget(r.budget_tier === "high" ? "premium" : r.budget_tier);
+    setPeople(String(r.adults + r.children + r.elderly));
+    setAdults(r.adults);
+    setChildren(r.children);
+    setElderly(r.elderly);
+    setTransport(r.transport);
+    setStay(r.stay);
+    setFood(r.food);
+    setSpecial(r.special);
+    setPriorities(r.priorities);
+    setDeparture(r.departure);
+    setFinish(r.finish);
+    setBudgetCap(r.budget_cap == null ? "" : String(r.budget_cap));
+    setRooms(r.rooms);
+    setVisitMinutes(r.visit_minutes);
+    setRestMinutes(r.rest_minutes);
+    setAllowEstimates(r.allow_estimates);
+    setStayMode(r.stay_mode || "daily_return");
+    setAvoidClimbing(!!r.avoid_climbing);
+    setTravelLimit(
+      r.daily_travel_limit_minutes == null
+        ? ""
+        : String(r.daily_travel_limit_minutes),
+    );
+    setTrafficBuffer(r.traffic_buffer_percent ?? 15);
+    setParkingBuffer(r.parking_buffer_minutes ?? 10);
+    setMealMinutes(r.meal_minutes ?? 60);
+    setIncludeAttractions(r.include_attractions);
+    setAllowances(
+      Object.fromEntries(
+        [
+          "meal_price_per_person",
+          "tolls_per_day",
+          "parking_per_visit",
+          "miscellaneous_per_day",
+        ].map((k) => {
+          const v = r[k as keyof PlanningRequest];
+          return [
+            k,
+            v && typeof v === "object" && "low" in v ? String(v.low) : "",
+          ];
+        }),
+      ),
+    );
+  }, [initialRequest]);
+
   const total = Number(people)
   const compositionOk = adults + children + elderly === total
 
@@ -176,25 +233,57 @@ export default function TripPlanner({
     setPriorities((p) => (p.includes(k) ? p.filter((x) => x !== k) : [...p, k]))
 
   const submit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!compositionOk || planning) return
-    setPlanError("")
-    setPlanning(true)
+    e.preventDefault();
+    if (!compositionOk || planning) return;
+    setPlanError("");
+    setPlanning(true);
     try {
-      const job = await planningFetch<PlanningJob>("jobs", { method: "POST", body: JSON.stringify({
-        temple_ids: selected.map(tm => tm.templeId), primary_temple_id: temple.templeId, timezone:"Asia/Kolkata", stay_mode:stayMode, avoid_climbing:avoidClimbing,
-        daily_travel_limit_minutes:travelLimit ? Number(travelLimit):null, traffic_buffer_percent:trafficBuffer, parking_buffer_minutes:parkingBuffer, meal_minutes:mealMinutes,
-        ...Object.fromEntries(Object.entries(allowances).map(([key,value])=>[key,value.trim() ? {low:Number(value),high:Number(value)}:null])), origin, start_date: date, days: Number(days),
-        departure, finish, budget_cap: budgetCap ? Number(budgetCap) : null,
-        adults, children, elderly, transport, stay, food, special,
-        budget_tier: budget === "premium" ? "high" : budget, rooms, visit_minutes: visitMinutes,
-        rest_minutes: restMinutes, priorities, include_attractions: includeAttractions,
-        language: lang, allow_estimates: allowEstimates,
-      }) })
-      try { localStorage.setItem("pilgrim:active_plan", job.id) } catch {}
-      router.push("/planning/" + job.id)
-    } catch (error) { setPlanError(error instanceof Error ? error.message : p("failure")); setPlanning(false) }
-  }
+      const request = {
+        temple_ids: selected.map((tm) => tm.templeId),
+        primary_temple_id: temple.templeId,
+        timezone: "Asia/Kolkata",
+        stay_mode: stayMode,
+        avoid_climbing: avoidClimbing,
+        daily_travel_limit_minutes: travelLimit ? Number(travelLimit) : null,
+        traffic_buffer_percent: trafficBuffer,
+        parking_buffer_minutes: parkingBuffer,
+        meal_minutes: mealMinutes,
+        ...Object.fromEntries(
+          Object.entries(allowances).map(([key, value]) => [
+            key,
+            value.trim() ? { low: Number(value), high: Number(value) } : null,
+          ]),
+        ),
+        origin,
+        start_date: date,
+        days: Number(days),
+        departure,
+        finish,
+        budget_cap: budgetCap ? Number(budgetCap) : null,
+        adults,
+        children,
+        elderly,
+        transport,
+        stay,
+        food,
+        special,
+        budget_tier: budget === "premium" ? "high" : budget,
+        rooms,
+        visit_minutes: visitMinutes,
+        rest_minutes: restMinutes,
+        priorities,
+        include_attractions: includeAttractions,
+        language: lang,
+        allow_estimates: allowEstimates,
+      } as PlanningRequest;
+      const id = stageSubmission(request);
+      setPending({ request, id });
+      router.push("/planning/" + id);
+    } catch (error) {
+      setPlanError(p("submissionStorage"));
+      setPlanning(false);
+    }
+  };
 
   // ---- real highlights strip (only sourced values) --------------------
   const strip: { icon: "pin" | "clock" | "type"; value: string; label: string }[] = []
@@ -223,8 +312,22 @@ export default function TripPlanner({
     "mt-1.5 h-[44px] w-full rounded-xl border border-[#e9d8c1] bg-white px-3 text-sm text-[#29251f] outline-none transition focus:border-[#b66a13] focus:ring-2 focus:ring-[#b66a13]/15"
   const labelRow = "flex items-center gap-1.5 text-[13px] font-medium text-[#5c5544]"
 
+  if (pending)
+    return (
+      <PlanningExperience
+        fullscreen
+        job={previewJob(pending.request)}
+        temples={selected}
+        onCancel={() => {
+          void cancelSubmission(pending.id);
+          setPending(null);
+          setPlanning(false);
+          router.push("/plan");
+        }}
+      />
+    );
   return (
-    <div className="px-5 py-5">
+    <div className="min-w-0 px-5 py-5">
       <button
         type="button"
         onClick={onBack}
@@ -698,7 +801,8 @@ export default function TripPlanner({
 
           <fieldset className="mt-5 grid gap-4 rounded-2xl border border-[#e9d8c1] p-4 sm:grid-cols-2">
             <legend className="px-2 font-serif font-semibold">{p("stay_mode")}</legend>
-            <label className="text-sm sm:col-span-2">{p("stay_mode")}<select aria-label={p("stay_mode")} className={inputCls} value={stayMode} onChange={e=>setStayMode(e.target.value)}><option value="daily_return">{p("daily_return")}</option><option value="overnight">{p("overnight")}</option></select></label>
+            <p id="overnight-policy-help" className="text-xs sm:col-span-2">{p("overnightConflict")}</p>
+            <label className="text-sm sm:col-span-2">{p("stay_mode")}<select aria-describedby="overnight-policy-help" aria-label={p("stay_mode")} className={inputCls} value={stayMode} onChange={e=>setStayMode(e.target.value)}><option value="daily_return">{p("daily_return")}</option><option value="overnight">{p("overnight")}</option></select></label>
             <p className="text-xs leading-5 text-[#796b5d] sm:col-span-2">{stayMode==='overnight'?p("overnightHelp"):p("hotel_not_needed_daily_return")}</p>
             <label className="flex gap-2 text-sm sm:col-span-2"><input type="checkbox" checked={avoidClimbing} onChange={e=>setAvoidClimbing(e.target.checked)}/>{p("avoid_climbing")}</label>
             <label className="text-sm">{p("daily_travel_limit_minutes")}<input type="number" min="30" max="840" className={inputCls} value={travelLimit} onChange={e=>setTravelLimit(e.target.value)}/></label>

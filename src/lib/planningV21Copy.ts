@@ -558,3 +558,51 @@ Object.assign(planningV21Copy, {
     "आवश्यक गंतव्य बिना चढ़ाई की सीमा के विरुद्ध है।",
   ],
 });
+Object.assign(planningV21Copy, {
+  submitting: [
+    "Sending your planning request…",
+    "మీ యాత్ర అభ్యర్థనను పంపుతున్నాము…",
+    "आपका यात्रा अनुरोध भेज रहे हैं…",
+  ],
+  overnightConflict: [
+    "Overnight travel needs at least two days and an accommodation preference (hotel, guest house or dharamshala). For a one-day trip, choose “Return to starting location each day”.",
+    "రాత్రి బసకు కనీసం రెండు రోజులు మరియు హోటల్, అతిథి గృహం లేదా ధర్మశాల ఎంపిక అవసరం. ఒక రోజు యాత్రకు “ప్రతి రోజూ ప్రారంభ స్థలానికి తిరుగు” ఎంచుకోండి.",
+    "रात्रि विश्राम के लिए कम से कम दो दिन और होटल, अतिथि गृह या धर्मशाला चुनना आवश्यक है। एक दिन के लिए “हर दिन प्रारंभिक स्थान पर लौटें” चुनें।",
+  ],
+  needsAttention: [
+    "Your request needs attention",
+    "మీ అభ్యర్థనకు సవరణ అవసరం",
+    "आपके अनुरोध में सुधार चाहिए",
+  ],
+  editRequest: [
+    "Edit request — keep my choices",
+    "నా ఎంపికలను ఉంచి సవరించు",
+    "मेरे विकल्प रखकर अनुरोध सुधारें",
+  ],
+  submissionMissing: [
+    "This pending request is missing or expired in this browser tab. Please open the trip form again.",
+    "ఈ బ్రౌజర్ ట్యాబ్‌లో అభ్యర్థన లేదు లేదా గడువు ముగిసింది. యాత్ర ఫారమ్‌ను మళ్లీ తెరవండి.",
+    "इस ब्राउज़र टैब में अनुरोध अनुपलब्ध है या समाप्त हो गया है। यात्रा फ़ॉर्म फिर खोलें।",
+  ],
+  submissionFailure: [
+    "We could not confirm the planning response. Check that the backend is running, then retry. Do not change the shared secret.",
+    "ప్రణాళిక ప్రతిస్పందనను నిర్ధారించలేకపోయాము. బ్యాకెండ్ నడుస్తోందో తనిఖీ చేసి మళ్లీ ప్రయత్నించండి. ఉమ్మడి రహస్య కీని మార్చవద్దు.",
+    "योजना की प्रतिक्रिया की पुष्टि नहीं हो सकी। बैकएंड चल रहा है या नहीं जाँचकर फिर प्रयास करें। साझा सीक्रेट न बदलें।",
+  ],
+  validationFailure: [
+    "Some trip details are invalid or contradictory. Edit your request; your selections will be preserved.",
+    "కొన్ని యాత్ర వివరాలు చెల్లవు లేదా పరస్పర విరుద్ధంగా ఉన్నాయి. మీ ఎంపికలను ఉంచి అభ్యర్థనను సవరించండి.",
+    "यात्रा के कुछ विवरण अमान्य या विरोधाभासी हैं। अनुरोध सुधारें; आपके विकल्प सुरक्षित रहेंगे।",
+  ],
+  retrySubmission: ["Retry response", "మళ్లీ ప్రయత్నించు", "फिर प्रयास करें"],
+  submissionStorage: [
+    "This browser could not preserve the request. Allow tab storage and try again.",
+    "ఈ బ్రౌజర్ అభ్యర్థనను నిల్వ చేయలేకపోయింది. ట్యాబ్ నిల్వను అనుమతించి మళ్లీ ప్రయత్నించండి.",
+    "यह ब्राउज़र अनुरोध सुरक्षित नहीं कर सका। टैब स्टोरेज की अनुमति देकर फिर प्रयास करें।",
+  ],
+  cancelFailure: [
+    "Cancellation could not be confirmed. Retry or check the saved job before starting again.",
+    "రద్దును నిర్ధారించలేకపోయాము. మళ్లీ ప్రయత్నించండి లేదా మరో అభ్యర్థనకు ముందు సేవ్ చేసిన ప్రణాళికను తనిఖీ చేయండి.",
+    "रद्द होने की पुष्टि नहीं हुई। फिर प्रयास करें या नई योजना से पहले सहेजा अनुरोध जाँचें।",
+  ],
+});

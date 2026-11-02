@@ -11,7 +11,9 @@ export function PlanningExperience({
   job,
   temples,
   onCancel,
+  fullscreen = false,
 }: {
+  fullscreen?: boolean;
   job: PlanningJob;
   temples: TempleSummary[];
   onCancel: () => void;
@@ -66,11 +68,21 @@ export function PlanningExperience({
   const current = stages.indexOf(job.stage);
   return (
     <section
-      className="mx-auto max-w-[1180px] p-4 sm:p-7"
+      className={
+        fullscreen
+          ? "fixed inset-0 z-[100] overflow-hidden bg-black text-[#f8edda]"
+          : "mx-auto max-w-[1180px] p-4 sm:p-7"
+      }
       aria-live="polite"
       data-planning-experience
     >
-      <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <header
+        className={
+          fullscreen
+            ? "absolute bottom-28 left-1/2 z-20 flex w-[92vw] max-w-4xl -translate-x-1/2 flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#d8c19d] bg-[#fffaf1]/95 p-4 text-[#45382b]"
+            : "mb-4 flex flex-wrap items-center justify-between gap-3"
+        }
+      >
         <div>
           <p className="text-xs uppercase tracking-[.2em] text-[#a66621]">
             PilgrimAI
@@ -89,9 +101,22 @@ export function PlanningExperience({
           {p("cancel")}
         </button>
       </header>
-      <div className="space-y-4">
-        <div className="min-w-0 overflow-hidden rounded-3xl border border-[#e8d6ba] bg-[#fffdf9] p-2 shadow-xl sm:p-3">
+      <div
+        className={
+          fullscreen
+            ? "h-full w-full"
+            : "space-y-4"
+        }
+      >
+        <div
+          className={
+            fullscreen
+              ? "absolute inset-0"
+              : "min-w-0 overflow-hidden rounded-3xl border border-[#e8d6ba] bg-[#fffdf9] p-2 shadow-xl sm:p-3"
+          }
+        >
           <TempleVideoPlayer
+            fillViewport={fullscreen}
             items={items}
             index={Math.min(index, Math.max(0, items.length - 1))}
             onEnded={() =>
@@ -111,12 +136,24 @@ export function PlanningExperience({
             }}
           />
         </div>
-        <div className="rounded-2xl border border-[#e8d6ba] bg-[#fffdf9] p-4">
+        <div
+          className={
+            fullscreen
+              ? "sr-only"
+              : "rounded-2xl border border-[#e8d6ba] bg-[#fffdf9] p-4"
+          }
+        >
           <h2 className="font-serif text-xl">{active?.title || p("title")}</h2>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-[#796b5d]">
+          <p
+            className={
+              fullscreen
+                ? "sr-only"
+                : "mt-2 max-w-3xl text-sm leading-6 text-[#796b5d]"
+            }
+          >
             {p("waitBody")}
           </p>
-          <ol className="mt-4 flex flex-wrap gap-2 ">
+          <ol className={fullscreen ? "sr-only" : "mt-4 flex flex-wrap gap-2"}>
             {stages.map((s, i) => (
               <li
                 key={s}

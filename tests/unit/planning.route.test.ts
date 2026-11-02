@@ -165,3 +165,24 @@ describe("signed planning gateway", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 });
+it("does not echo Pydantic input payloads or raw JSON for 422 errors", async () => {
+  fetcher.mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        detail: [
+          { msg: "contradiction", input: { origin: "private-test-input" } },
+        ],
+      }),
+      { status: 422 },
+    ),
+  );
+  const response = await POST(
+    new Request("https://app.example/api/planning/jobs", {
+      method: "POST",
+      body: "{}",
+    }),
+    ctx(["jobs"]),
+  );
+  expect(response.status).toBe(422);
+  expect(await response.json()).toEqual({ error: "validationFailure" });
+});

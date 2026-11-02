@@ -77,7 +77,9 @@ export function TempleVideoPlayer({
   onPrev,
   onNext,
   onVideoError,
+  fillViewport = false,
 }: {
+  fillViewport?: boolean
   items: VideoItem[]
   index: number
   onEnded: () => void
@@ -354,11 +356,11 @@ export function TempleVideoPlayer({
   const showControls = Boolean(current) && !(engine === "youtube" && apiFailed)
 
   return (
-    <div>
+    <div className={fillViewport ? "h-full w-full" : undefined}>
       {/* ============ picture: video + fullscreen button only ============ */}
       <div
         ref={frameRef}
-        className="relative aspect-video w-full overflow-hidden rounded-2xl bg-black shadow-[0_10px_30px_rgba(41,37,31,0.16)]"
+        className={fillViewport ? "relative h-full w-full overflow-hidden bg-black" : "relative aspect-video w-full overflow-hidden rounded-2xl bg-black shadow-[0_10px_30px_rgba(41,37,31,0.16)]"}
         data-playback={engine === "youtube" && apiFailed ? "error" : phase}
         data-engine={engine}
         data-video-id={currentVideoId ?? ""}
@@ -452,7 +454,7 @@ export function TempleVideoPlayer({
 
       {/* ==== outside-the-picture controls (never cover the video) ====== */}
       {showControls && (
-        <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-2" data-player-controls>
+        <div className={fillViewport ? "absolute left-1/2 top-20 z-20 flex max-w-[90vw] -translate-x-1/2 flex-wrap gap-2 rounded-xl bg-[#fffdf9]/95 p-2" : "mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-2"} style={fillViewport ? {color:"#79440f"}:undefined} data-player-controls>
           <button
             type="button"
             onClick={togglePlay}
