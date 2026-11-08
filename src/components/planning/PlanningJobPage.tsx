@@ -32,22 +32,24 @@ export function PlanningJobPage({
     let disposed = false;
     let timer: ReturnType<typeof setTimeout>;
     const abort = new AbortController();
+    let acceptedId: string | null = submission ? null : id;
+    const record = submission ? readSubmission(id) : null;
+    if (record) setJob(previewJob(record.request));
     const load = async () => {
       try {
-        const record = submission ? readSubmission(id) : null;
         if (submission && !record) throw new Error("submissionMissing");
-        if (record && !disposed) setJob(previewJob(record.request));
-        const next = submission
-          ? await (attempt ? retrySubmission(id) : submitOnce(id))
-          : await planningFetch<PlanningJob>("jobs/" + id, {
+        const next = acceptedId
+          ? await planningFetch<PlanningJob>("jobs/" + acceptedId, {
               signal: abort.signal,
-            });
+            })
+          : await (attempt ? retrySubmission(id) : submitOnce(id));
         if (disposed) return;
-        setJob(next);
+        if (next.status === "queued" || next.status === "running") setJob(next);
         setError("");
-        if (submission) {
-          router.replace("/planning/" + next.id);
-          return;
+        if (!acceptedId) {
+          acceptedId = next.id;
+          // Native history keeps this mounted player alive while making reload resumable.
+          window.history.replaceState(null, "", "/planning/" + next.id);
         }
         if (next.status === "queued" || next.status === "running")
           timer = setTimeout(load, 1300);

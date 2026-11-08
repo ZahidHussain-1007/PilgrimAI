@@ -644,3 +644,34 @@ def test_catalog_normalization_with_windows_cp1252_default(monkeypatch):
 
     monkeypatch.setattr(Path, "read_text", windows_read)
     test_catalog_normalization_all_23_all_weekdays_and_digest_fail_closed()
+
+
+def test_ambiguous_origin_preserves_choices_for_actionable_retry(
+    client, req, monkeypatch
+):
+    from app.travel.resolver import TravelResolverClarificationError
+    from app.travel.schemas import PlaceCandidate
+
+    candidates = [
+        PlaceCandidate(
+            display_name="TEST place A, Telangana",
+            latitude=17.1,
+            longitude=79.1,
+            source="TEST_FIXTURE",
+        ),
+        PlaceCandidate(
+            display_name="TEST place B, Telangana",
+            latitude=18.1,
+            longitude=79.1,
+            source="TEST_FIXTURE",
+        ),
+    ]
+
+    def ambiguous(_):
+        raise TravelResolverClarificationError("TEST origin", candidates)
+
+    monkeypatch.setattr(evidence, "origin_point", ambiguous)
+    job = complete(client, req, monkeypatch)
+    assert job["status"] == "failed" and job["error_code"] == "originAmbiguous"
+    assert len(job["origin_candidates"]) == 2
+    assert job["request"]["temple_ids"] == req.temple_ids

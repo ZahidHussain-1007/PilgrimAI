@@ -26,10 +26,14 @@ def buffered_routes(req, matrix):
             "traffic_live": False,
         }
         if leg.get("minutes") is not None:
-            out["minutes"] = math.ceil(
+            buffered = math.ceil(
                 leg["minutes"] * (1 + req.traffic_buffer_percent / 100)
             )
-            out["traffic_buffer_minutes"] = out["minutes"] - leg["minutes"]
+            out["minutes"] = (
+                math.ceil(buffered / req.time_grid_minutes) * req.time_grid_minutes
+            )
+            out["traffic_buffer_minutes"] = buffered - leg["minutes"]
+            out["rounding_buffer_minutes"] = out["minutes"] - buffered
         result[key] = out
     return result
 
@@ -62,8 +66,10 @@ def _maps(req, schedule, origin, places, options):
         ids = (
             ["origin"]
             if index == 0 or req.stay_mode == "daily_return"
-            else [options["selected_hotel"]["id"]]
-            if options.get("selected_hotel")
+            else [
+                (options.get("selected_hotel") or options.get("overnight_area"))["id"]
+            ]
+            if options.get("selected_hotel") or options.get("overnight_area")
             else []
         )
         ids += [
@@ -94,6 +100,8 @@ def _maps(req, schedule, origin, places, options):
             hotel = options.get("selected_hotel")
             day["overnight"] = {
                 "hotel_id": hotel["id"] if hotel else None,
+                "area_id": options.get("overnight_area", {}).get("id"),
+                "transfers_unconfirmed": bool(options.get("overnight_area")),
                 "next_date": requested_dates(req)[index + 1],
                 "rooms": req.rooms,
                 "people": req.adults + req.children + req.elderly,
@@ -132,6 +140,7 @@ def plan(
     allow_alternative=True,
     progress=None,
 ):
+    options.pop("overnight_area", None)
     deadline = time.monotonic() + time_budget_seconds
     places = required + candidates
     diagnostics = []
@@ -165,6 +174,18 @@ def plan(
     combinations.sort(key=lambda combo: -sum(c.get("rank_score", 0) for c in combo))
     # Keep required-only fallback; it remains incomplete when a date lacks visits.
     hotels = hotel_candidates(req, options) if req.stay_mode == "overnight" else [None]
+    if not hotels and req.stay_mode == "overnight" and req.allow_unconfirmed_stay:
+        primary = next(p for p in required if p["id"] == req.primary_temple_id)
+        hotels = [
+            {
+                **primary,
+                "kind": "overnight_area",
+                "maps_url": primary["url"],
+                "verification": "area_only_not_a_hotel",
+                "availability": "unverified",
+            }
+        ]
+        options["overnight_area"] = hotels[0]
     hotels = hotels or [None]
     work = [(combo, hotel) for combo in combinations for hotel in hotels]
     truncated = len(work) > 15
@@ -182,7 +203,9 @@ def plan(
             progress("schedule")
         chosen = required + list(combo)
         synthetic = req.model_copy(update={"temple_ids": [p["id"] for p in chosen]})
-        options["selected_hotel"] = hotel
+        options["selected_hotel"] = (
+            hotel if hotel and hotel.get("kind") != "overnight_area" else None
+        )
         if req.stay_mode == "overnight" and not hotel:
             schedule = {
                 "days": [],
@@ -254,7 +277,9 @@ def plan(
             None,
         )
     _, schedule, cost, check, actual, hotel = best
-    options["selected_hotel"] = hotel
+    options["selected_hotel"] = (
+        hotel if hotel and hotel.get("kind") != "overnight_area" else None
+    )
     schedule.update(
         feasible=check["passed"],
         conflicts=check["critical"],

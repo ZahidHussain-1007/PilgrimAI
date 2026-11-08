@@ -1,5 +1,6 @@
 "use client"
 
+import { requestHighestVideoQuality } from "../../lib/youtube"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useT } from "../../lib/i18n"
 import { youtubeWatchUrl } from "../../lib/youtube"
@@ -30,7 +31,8 @@ declare global {
 /** Singleton YouTube IFrame API loader (shared across mounts). */
 let ytPromise: Promise<any> | null = null
 function loadYT(): Promise<any> {
-  if (typeof window === "undefined") return Promise.reject(new Error("no window"))
+  if (typeof window === "undefined")
+    return Promise.reject(new Error("no window"))
   if (window.YT?.Player) return Promise.resolve(window.YT)
   if (ytPromise) return ytPromise
   ytPromise = new Promise((resolve, reject) => {
@@ -78,8 +80,10 @@ export function TempleVideoPlayer({
   onNext,
   onVideoError,
   fillViewport = false,
+  showControls = true,
 }: {
   fillViewport?: boolean
+  showControls?: boolean
   items: VideoItem[]
   index: number
   onEnded: () => void
@@ -102,6 +106,7 @@ export function TempleVideoPlayer({
   callbacksRef.current = { onEnded, onPrev, onNext, onVideoError }
 
   const [phase, setPhase] = useState<Phase>(items.length ? "loading" : "empty")
+  const [quality, setQuality] = useState("adaptive")
   const [apiFailed, setApiFailed] = useState(false)
   const [isFs, setIsFs] = useState(false)
   const itemsRef = useRef(items)
@@ -109,12 +114,21 @@ export function TempleVideoPlayer({
 
   const current = items[index] ?? null
   const currentVideoId = current?.videoId ?? null
-  const engine: Engine = !current ? "none" : current.fileUrl ? "html5" : "youtube"
+  const engine: Engine = !current
+    ? "none"
+    : current.fileUrl
+      ? "html5"
+      : "youtube"
 
   // ---- fullscreen state follows real fullscreen events -----------------
   useEffect(() => {
     const sync = () =>
-      setIsFs(Boolean(document.fullscreenElement || (document as any).webkitFullscreenElement))
+      setIsFs(
+        Boolean(
+          document.fullscreenElement ||
+            (document as any).webkitFullscreenElement,
+        ),
+      )
     document.addEventListener("fullscreenchange", sync)
     document.addEventListener("webkitfullscreenchange", sync)
     return () => {
@@ -171,6 +185,7 @@ export function TempleVideoPlayer({
               ytReadyRef.current = true
               ytCreatingRef.current = false
               const p = e.target
+              setQuality(requestHighestVideoQuality(p))
               try {
                 p.mute()
               } catch {}
@@ -186,6 +201,7 @@ export function TempleVideoPlayer({
               if (s === 1) {
                 gotPlayingRef.current = true
                 setPhase("playing")
+                setQuality(requestHighestVideoQuality(e.target))
               } else if (s === 0) {
                 if (itemsRef.current.length <= 1) {
                   try {
@@ -196,17 +212,24 @@ export function TempleVideoPlayer({
                   callbacksRef.current.onEnded()
                 }
               } else if (s === 2) {
-                if (attemptedRef.current && !gotPlayingRef.current) setPhase("blocked")
+                if (attemptedRef.current && !gotPlayingRef.current)
+                  setPhase("blocked")
                 else if (gotPlayingRef.current) setPhase("paused")
               } else if (s === 5) {
-                if (attemptedRef.current && !gotPlayingRef.current) setPhase("blocked")
+                if (attemptedRef.current && !gotPlayingRef.current)
+                  setPhase("blocked")
               }
             },
             onError: (e: any) => {
               if (gen !== ytGenRef.current) return
               const vid = loadedYtIdRef.current
               // eslint-disable-next-line no-console
-              console.warn("[TempleVideoPlayer] YT error code=", e.data, "videoId=", vid)
+              console.warn(
+                "[TempleVideoPlayer] YT error code=",
+                e.data,
+                "videoId=",
+                vid,
+              )
               if (vid) callbacksRef.current.onVideoError(vid)
             },
           },
@@ -274,7 +297,8 @@ export function TempleVideoPlayer({
     if (res && typeof res.catch === "function") {
       res.catch(() => {
         // autoplay refused → minimal play action shows OUTSIDE the picture
-        if (videoRef.current === v && !gotPlayingRef.current) setPhase("blocked")
+        if (videoRef.current === v && !gotPlayingRef.current)
+          setPhase("blocked")
       })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -353,15 +377,21 @@ export function TempleVideoPlayer({
 
   const many = items.length > 1
   const isPlaying = phase === "playing"
-  const showControls = Boolean(current) && !(engine === "youtube" && apiFailed)
+  const canShowControls =
+    showControls && Boolean(current) && !(engine === "youtube" && apiFailed)
 
   return (
     <div className={fillViewport ? "h-full w-full" : undefined}>
       {/* ============ picture: video + fullscreen button only ============ */}
       <div
         ref={frameRef}
-        className={fillViewport ? "relative h-full w-full overflow-hidden bg-black" : "relative aspect-video w-full overflow-hidden rounded-2xl bg-black shadow-[0_10px_30px_rgba(41,37,31,0.16)]"}
+        className={
+          fillViewport
+            ? "relative h-full w-full overflow-hidden bg-black"
+            : "relative aspect-video w-full overflow-hidden rounded-2xl bg-black shadow-[0_10px_30px_rgba(41,37,31,0.16)]"
+        }
         data-playback={engine === "youtube" && apiFailed ? "error" : phase}
+        data-quality={quality}
         data-engine={engine}
         data-video-id={currentVideoId ?? ""}
       >
@@ -381,7 +411,8 @@ export function TempleVideoPlayer({
               setPhase("playing")
             }}
             onPause={() => {
-              if (gotPlayingRef.current && videoRef.current?.ended === false) setPhase("paused")
+              if (gotPlayingRef.current && videoRef.current?.ended === false)
+                setPhase("paused")
             }}
             onEnded={handleEnded}
             onError={handleFileError}
@@ -401,16 +432,38 @@ export function TempleVideoPlayer({
           <button
             type="button"
             onClick={toggleFullscreen}
-            aria-label={isFs ? t("plan.fullscreenExit") : t("plan.fullscreenEnter")}
+            aria-label={
+              isFs ? t("plan.fullscreenExit") : t("plan.fullscreenEnter")
+            }
             aria-pressed={isFs}
             className="absolute right-2.5 top-2.5 z-10 grid h-8 w-8 place-items-center rounded-lg bg-black/55 text-white backdrop-blur transition hover:bg-black/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
           >
             {isFs ? (
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
                 <path d="M8 3v3a2 2 0 0 1-2 2H3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M3 16v3a2 2 0 0 0 2 2h3" />
               </svg>
             ) : (
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
                 <path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" />
               </svg>
             )}
@@ -420,7 +473,10 @@ export function TempleVideoPlayer({
         {/* loading — no dark layer over the picture, just a spinner */}
         {phase === "loading" && (
           <div className="pointer-events-none absolute inset-0 grid place-items-center">
-            <span className="spinner !h-7 !w-7 !border-white/30 !border-t-white" aria-hidden="true" />
+            <span
+              className="spinner !h-7 !w-7 !border-white/30 !border-t-white"
+              aria-hidden="true"
+            />
           </div>
         )}
 
@@ -428,8 +484,12 @@ export function TempleVideoPlayer({
         {phase === "empty" && (
           <div className="absolute inset-0 grid place-items-center bg-[#241b12] px-6 text-center">
             <div className="max-w-sm">
-              <p className="font-serif text-base font-semibold text-[#f3e4c9]">{t("plan.noVideosTitle")}</p>
-              <p className="mt-1.5 text-xs leading-relaxed text-[#cbb99a]">{t("plan.noVideosBody")}</p>
+              <p className="font-serif text-base font-semibold text-[#f3e4c9]">
+                {t("plan.noVideosTitle")}
+              </p>
+              <p className="mt-1.5 text-xs leading-relaxed text-[#cbb99a]">
+                {t("plan.noVideosBody")}
+              </p>
             </div>
           </div>
         )}
@@ -438,7 +498,9 @@ export function TempleVideoPlayer({
         {apiFailed && engine === "youtube" && current && (
           <div className="absolute inset-0 grid place-items-center bg-[#241b12]/92 px-6 text-center">
             <div className="max-w-sm">
-              <p className="font-serif text-base font-semibold text-[#f3e4c9]">{t("plan.videoUnavailable")}</p>
+              <p className="font-serif text-base font-semibold text-[#f3e4c9]">
+                {t("plan.videoUnavailable")}
+              </p>
               <a
                 href={youtubeWatchUrl(current.ytId ?? "")}
                 target="_blank"
@@ -453,8 +515,16 @@ export function TempleVideoPlayer({
       </div>
 
       {/* ==== outside-the-picture controls (never cover the video) ====== */}
-      {showControls && (
-        <div className={fillViewport ? "absolute left-1/2 top-20 z-20 flex max-w-[90vw] -translate-x-1/2 flex-wrap gap-2 rounded-xl bg-[#fffdf9]/95 p-2" : "mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-2"} style={fillViewport ? {color:"#79440f"}:undefined} data-player-controls>
+      {canShowControls && (
+        <div
+          className={
+            fillViewport
+              ? "absolute left-1/2 top-20 z-20 flex max-w-[90vw] -translate-x-1/2 flex-wrap gap-2 rounded-xl bg-[#fffdf9]/95 p-2"
+              : "mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-2"
+          }
+          style={fillViewport ? { color: "#79440f" } : undefined}
+          data-player-controls
+        >
           <button
             type="button"
             onClick={togglePlay}
@@ -462,12 +532,24 @@ export function TempleVideoPlayer({
             className="inline-flex items-center gap-1.5 rounded-lg border border-[#e9d8c1] bg-white px-3 py-1.5 text-xs font-semibold text-[#79440f] transition hover:bg-[#faf4e8] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b66a13]/30"
           >
             {isPlaying ? (
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                aria-hidden="true"
+              >
                 <rect x="6" y="5" width="4" height="14" rx="1" />
                 <rect x="14" y="5" width="4" height="14" rx="1" />
               </svg>
             ) : (
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                aria-hidden="true"
+              >
                 <path d="M8 5.5v13l11-6.5z" />
               </svg>
             )}
@@ -482,7 +564,13 @@ export function TempleVideoPlayer({
                 aria-label={t("plan.prev")}
                 className="grid h-7 w-7 place-items-center rounded-lg border border-[#e9d8c1] bg-white text-[#79440f] transition hover:bg-[#faf4e8] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b66a13]/30"
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  aria-hidden="true"
+                >
                   <path d="M15.5 5.5v13L7 12z" />
                   <rect x="5" y="5.5" width="2.2" height="13" rx="1" />
                 </svg>
@@ -498,7 +586,13 @@ export function TempleVideoPlayer({
                 aria-label={t("plan.next")}
                 className="grid h-7 w-7 place-items-center rounded-lg border border-[#e9d8c1] bg-white text-[#79440f] transition hover:bg-[#faf4e8] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b66a13]/30"
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  aria-hidden="true"
+                >
                   <path d="M8.5 5.5v13L17 12z" />
                   <rect x="16.8" y="5.5" width="2.2" height="13" rx="1" />
                 </svg>

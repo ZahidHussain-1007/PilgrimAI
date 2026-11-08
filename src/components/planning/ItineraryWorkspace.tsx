@@ -1,4 +1,5 @@
 "use client";
+import { stageSubmission, previewJob } from "../../lib/planningSubmission";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -93,6 +94,8 @@ export function ItineraryWorkspace({
     >([]),
     [proposal, setProposal] = useState<Record<string, unknown> | null>(null),
     [draft, setDraft] = useState<PlanningRequest | null>(null);
+  const [originEdit, setOriginEdit] = useState<string | null>(null);
+  const [originRetry, setOriginRetry] = useState<PlanningRequest | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let cancelled = false;
@@ -221,13 +224,69 @@ export function ItineraryWorkspace({
         )}
       </>
     );
+  if (originRetry)
+    return (
+      <PlanningExperience
+        fullscreen
+        job={previewJob(originRetry)}
+        temples={temples}
+        onCancel={() => {
+          setOriginRetry(null);
+          router.push("/plan");
+        }}
+      />
+    );
   if (!job.result)
     return (
       <section className="p-8">
         <h1 className="font-serif text-3xl">{p("failure")}</h1>
         <p role="alert" className="my-4">
-          {job.error || job.status}
+          {job.error_code ? p(job.error_code) : job.error || job.status}
         </p>
+        <form
+          className="my-5 max-w-xl space-y-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            try {
+              const request = {
+                ...job.request,
+                origin: originEdit ?? job.request.origin,
+                allow_unconfirmed_stay: job.request.stay_mode === "overnight",
+                time_grid_minutes: 5 as const,
+              };
+              const next = stageSubmission(request);
+              setOriginRetry(request);
+              router.push("/planning/" + next);
+            } catch {
+              setError(p("submissionStorage"));
+            }
+          }}
+        >
+          <label className="block text-sm">
+            {p("startingPlace")}
+            <input
+              required
+              minLength={2}
+              maxLength={160}
+              className="mt-2 w-full rounded-xl border border-[#dac5a6] bg-white px-4 py-3"
+              value={originEdit ?? job.request.origin}
+              onChange={(e) => setOriginEdit(e.target.value)}
+            />
+          </label>
+          {job.origin_candidates?.map((c) => (
+            <button
+              key={c.latitude + "," + c.longitude}
+              type="button"
+              className="block w-full rounded-xl border border-[#dac5a6] p-3 text-left text-sm"
+              onClick={() => setOriginEdit(c.latitude + "," + c.longitude)}
+            >
+              {c.display_name}
+            </button>
+          ))}
+          <button type="submit" className={button}>
+            {p("retryOrigin")}
+          </button>
+        </form>
         <Link href="/plan" className={button}>
           {p("back")}
         </Link>
@@ -298,6 +357,14 @@ export function ItineraryWorkspace({
             ))}
           </ul>
         </section>
+      )}
+      {!!result.options.overnight_area && (
+        <section className={box + " border-[#c87543]"} data-conditional-stay>
+          <p className="text-sm leading-7">{p("conditionalStay")}</p>
+        </section>
+      )}
+      {job.request.time_grid_minutes === 5 && (
+        <p className="text-xs text-[#796b5d]">{p("timeGrid")}</p>
       )}
       {!result.schema_version && (
         <section className={box} role="alert">

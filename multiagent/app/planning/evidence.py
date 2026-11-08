@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 
 from app.agents import temple
 from app.travel.providers.routing import route_osrm
-from app.travel.resolver import resolve_place
+from .origins import resolve_origin as resolve_place
 from app.travel.schemas import Coordinate
 
 from .calendar import _normalized, opening_windows

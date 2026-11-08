@@ -635,3 +635,125 @@ def test_unselected_candidates_distinguish_feasible_lower_rank_from_failed_check
         ]
         assert any(not d["critical_codes"] for d in attempted)
         assert candidate["reason_codes"] == []
+
+
+def test_conditional_overnight_draft_retains_days_without_inventing_a_hotel():
+    req = request(
+        days=2,
+        stay="hotel",
+        stay_mode="overnight",
+        include_attractions=True,
+        allow_unconfirmed_stay=True,
+        time_grid_minutes=5,
+    )
+    plan, b, _, _, opts, _ = run(req, travel=13)
+    assert not plan["feasible"]
+    assert "HOTEL_REQUIREMENTS_UNVERIFIED" in codes(plan)
+    assert "PRIMARY_TEMPLE_MISSING" not in codes(plan), plan["conflicts"]
+    assert all(any(i["type"] == "visit" for i in d["items"]) for d in plan["days"])
+    assert (
+        opts["selected_hotel"] is None
+        and opts["overnight_area"]["kind"] == "overnight_area"
+    )
+    assert not any(
+        i["type"] in {"checkin", "checkout"} for d in plan["days"] for i in d["items"]
+    )
+    assert not any(i.get("to_id") == "origin" for i in plan["days"][0]["items"])
+    assert any(i.get("to_id") == "origin" for i in plan["days"][-1]["items"])
+    assert "stay" in b["missing"]
+    assert (
+        next(i for i in b["items"] if i["category"] == "stay" and i["quantity"])[
+            "unit_low"
+        ]
+        is None
+    )
+
+
+def test_five_minute_grid_is_conservative_and_independently_validated():
+    from app.planning.calendar import minutes
+
+    req = request(
+        time_grid_minutes=5,
+        departure="07:02",
+        finish="21:03",
+        visit_minutes=76,
+        rest_minutes=17,
+        parking_buffer_minutes=11,
+        meal_minutes=61,
+    )
+    plan, b, _, matrix, opts, places = run(req, travel=13)
+    assert plan["feasible"], plan["conflicts"]
+    assert all(
+        minutes(i["start"]) % 5 == minutes(i["end"]) % 5 == 0
+        for d in plan["days"]
+        for i in d["items"]
+    )
+    assert (
+        next(i for i in plan["days"][0]["items"] if i["type"] == "visit")[
+            "duration_minutes"
+        ]
+        >= 80
+    )
+    assert all(v["minutes"] >= v["routing_minutes"] for v in matrix.values())
+    bad = deepcopy(plan)
+    bad["days"][0]["items"][0]["start"] = "07:06"
+    assert "TIME_GRID_INVALID" in {
+        e["code"]
+        for e in validation.validate(req, places, bad, matrix, opts, b)["critical"]
+    }
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("nalonda", "Nalgonda"),
+        ("nizambad", "Nizamabad"),
+        ("mahbubnagar", "Mahabubnagar"),
+        ("adilabad", "Adilabad"),
+        ("khammam", "Khammam"),
+    ],
+)
+def test_origin_name_normalization_is_scoped_and_does_not_invent_coordinates(
+    text, expected
+):
+    from app.planning.origins import canonical_city
+
+    assert canonical_city(text) == expected
+    assert canonical_city("Uppal, Hyderabad") is None
+    assert canonical_city("Khammam railway station") is None
+
+
+def test_origin_resolver_prefers_city_over_same_name_district_and_keeps_real_ambiguity(
+    monkeypatch, tmp_path
+):
+    from app.planning import origins
+    from app.travel.schemas import PlaceCandidate
+    from app.travel.resolver import TravelResolverClarificationError
+
+    monkeypatch.setattr(origins, "CACHE", tmp_path)
+    city = PlaceCandidate(
+        display_name="Khammam, Telangana, India",
+        latitude=17.2465,
+        longitude=80.15,
+        source="TEST_FIXTURE",
+        place_type="city",
+    )
+    district = PlaceCandidate(
+        display_name="Khammam District, Telangana, India",
+        latitude=17.5,
+        longitude=80.4,
+        source="TEST_FIXTURE",
+        place_type="administrative",
+    )
+    monkeypatch.setattr(origins, "search", lambda *a, **k: [district, city])
+    assert origins.resolve_origin("khammam").coordinates.latitude == city.latitude
+    for p in tmp_path.glob("*"):
+        p.unlink()
+    other = city.model_copy(update={"latitude": 18.2})
+    monkeypatch.setattr(origins, "search", lambda *a, **k: [city, other])
+    with pytest.raises(TravelResolverClarificationError):
+        origins.resolve_origin("khammam")
+
+    monkeypatch.setattr(origins, "search", lambda *a, **k: [district])
+    with pytest.raises(TravelResolverClarificationError):
+        origins.resolve_origin("khammam")  # Never silently use a district centroid.

@@ -1,14 +1,14 @@
 "use client"
 
-import { useEffect,useState } from "react"
+import { useEffect, useState } from "react"
 import { useT } from "../../lib/i18n"
 import type { TempleSummary } from "../../lib/temples"
 import { TempleTrail } from "../../components/plan/TempleTrail"
 import { DiscoveryChat } from "../../components/plan/DiscoveryChat"
 import { TempleBrowser } from "../../components/plan/TempleBrowser"
 import TempleFinder from "../../components/plan/TempleFinder"
-import {EDIT_REQUEST} from "../../lib/planningSubmission"
-import type {PlanningRequest} from "../../lib/planning"
+import { EDIT_REQUEST } from "../../lib/planningSubmission"
+import type { PlanningRequest } from "../../lib/planning"
 import TripPlanner from "../../components/plan/TripPlanner"
 
 type View = "discover" | "find" | "trip"
@@ -16,20 +16,20 @@ type View = "discover" | "find" | "trip"
 export function PlanClient({ temples: ALL }: { temples: TempleSummary[] }) {
   const { t } = useT()
   const [view, setView] = useState<View>("discover")
-  const [restore, setRestore] = useState<PlanningRequest | null>(null);
+  const [restore, setRestore] = useState<PlanningRequest | null>(null)
   useEffect(() => {
     try {
-      const raw = sessionStorage.getItem(EDIT_REQUEST);
-      if (!raw) return;
-      const r = JSON.parse(raw) as PlanningRequest;
-      if (!Array.isArray(r.temple_ids)) return;
-      setRestore(r);
-      setSelected(r.temple_ids);
-      setInitial(r.primary_temple_id || r.temple_ids[0]);
-      setView("trip");
-      sessionStorage.removeItem(EDIT_REQUEST);
+      const raw = sessionStorage.getItem(EDIT_REQUEST)
+      if (!raw) return
+      const r = JSON.parse(raw) as PlanningRequest
+      if (!Array.isArray(r.temple_ids)) return
+      setRestore(r)
+      setSelected(r.temple_ids)
+      setInitial(r.primary_temple_id || r.temple_ids[0])
+      setView("trip")
+      sessionStorage.removeItem(EDIT_REQUEST)
     } catch {}
-  }, []);
+  }, [])
   const [selected, setSelected] = useState<string[]>([])
   // Yadadri (T0001) is the deterministic reference/featured state — display
   // default only; any marker click replaces it, nothing is persisted.
@@ -95,35 +95,43 @@ export function PlanClient({ temples: ALL }: { temples: TempleSummary[] }) {
 
   return (
     <div className="flex flex-col gap-4 px-5 py-5">
-      {/* heading */}
-      <div>
-        <h1 className="font-serif text-3xl font-bold text-[#29251f] sm:text-4xl">
-          {t("discover.titleLead")} <span className="text-[#b66a13]">{t("discover.titleAccent")}</span>
-        </h1>
-        <p className="mt-1.5 max-w-2xl font-serif text-sm italic text-[#796b5d]">
-          {t("discover.subtitle").replace("{count}", String(ALL.length))}
-        </p>
-      </div>
-
-      {/* sticky action toolbar — same selection state + handler as the
-          bottom bar; pins below the app header inside .page-content */}
-      <div className="sticky top-0 z-30 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[14px] border border-[#e9d8c1] bg-[#fbf8f2] px-4 py-2.5 shadow-[0_4px_14px_rgba(41,37,31,0.07)]">
-        <p className="text-[13px] font-semibold text-[#79440f]">
-          {t("discover.selectedCount").replace("{count}", String(selectedCount))}
-        </p>
-        {!canContinue && (
-          <p className="text-[11.5px] text-[#9a8f7b]">{t("discover.selectHint")}</p>
-        )}
-        <button
-          type="button"
-          onClick={goTrip}
-          disabled={!canContinue}
-          aria-label={t("discover.continue")}
-          className="ml-auto rounded-full bg-[#b66a13] px-5 py-2 text-sm font-semibold text-white transition hover:bg-[#99580d] disabled:cursor-not-allowed disabled:opacity-45"
+      <header
+        data-discovery-header
+        className="sticky top-0 z-30 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 rounded-2xl bg-[#fbf8f2]/95 py-2 backdrop-blur"
+      >
+        <div className="contents">
+          <h1 className="col-start-1 row-start-1 min-w-0 font-serif text-[26px] font-bold leading-tight text-[#29251f] sm:text-4xl">
+            {t("discover.titleLead")}{" "}
+            <span className="text-[#b66a13]">{t("discover.titleAccent")}</span>
+          </h1>
+          <p className="col-span-2 row-start-2 text-sm text-[#796b5d]">
+            {t("discover.subtitle").replace("{count}", String(ALL.length))}
+          </p>
+        </div>
+        <div
+          className="col-start-2 row-start-1 flex max-w-[170px] shrink-0 flex-col items-end gap-2 sm:max-w-none sm:flex-row sm:items-center sm:gap-4"
+          data-top-continue
         >
-          {t("discover.continue")} →
-        </button>
-      </div>
+          <p
+            className="text-right text-xs font-semibold text-[#79440f]"
+            aria-live="polite"
+          >
+            {t("discover.selectedCount").replace(
+              "{count}",
+              String(selectedCount),
+            )}
+          </p>
+          <button
+            type="button"
+            onClick={goTrip}
+            disabled={!canContinue}
+            aria-label={t("discover.continue")}
+            className="rounded-full bg-[#b66a13] px-5 py-3 text-sm font-semibold text-white disabled:opacity-45"
+          >
+            {t("discover.continue")} →
+          </button>
+        </div>
+      </header>
 
       {/* trail (+ help banner) left · chat right — items-start keeps a
           bounded chat from stretching the map column (and vice versa) */}
@@ -141,16 +149,32 @@ export function PlanClient({ temples: ALL }: { temples: TempleSummary[] }) {
 
           {/* help banner — opens the guided finder */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-[22px] border border-[#e9d8c1] bg-[#fffdf9] px-5 py-4 shadow-[0_4px_14px_rgba(41,37,31,0.05)]">
-            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-[#e8c9a0] bg-[#faf4e8]" aria-hidden="true">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#c2761b" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+            <span
+              className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-[#e8c9a0] bg-[#faf4e8]"
+              aria-hidden="true"
+            >
+              <svg
+                width="22"
+                height="22"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="#c2761b"
+                strokeWidth="1.7"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
                 <rect x="3" y="4.5" width="18" height="16.5" rx="2.5" />
                 <path d="M3 9.5h18M8 2.5v4M16 2.5v4" />
                 <path d="M7.5 14h4M7.5 17.5h7" />
               </svg>
             </span>
             <div className="min-w-[180px] flex-1">
-              <p className="font-serif text-[17px] font-semibold text-[#29251f]">{t("discover.helpTitle")}</p>
-              <p className="mt-0.5 text-[12.5px] leading-snug text-[#796b5d]">{t("discover.helpDesc")}</p>
+              <p className="font-serif text-[17px] font-semibold text-[#29251f]">
+                {t("discover.helpTitle")}
+              </p>
+              <p className="mt-0.5 text-[12.5px] leading-snug text-[#796b5d]">
+                {t("discover.helpDesc")}
+              </p>
             </div>
             <button
               type="button"
@@ -165,7 +189,11 @@ export function PlanClient({ temples: ALL }: { temples: TempleSummary[] }) {
         {/* bounded panel: the conversation scrolls INSIDE messages only —
             a long thread can never grow this wrapper (or the page) */}
         <div className="h-[440px] lg:h-[clamp(380px,calc(100dvh_-_220px),560px)]">
-          <DiscoveryChat temples={ALL} selectedIds={selected} onAdd={addTemple} />
+          <DiscoveryChat
+            temples={ALL}
+            selectedIds={selected}
+            onAdd={addTemple}
+          />
         </div>
       </div>
 
@@ -177,7 +205,10 @@ export function PlanClient({ temples: ALL }: { temples: TempleSummary[] }) {
       <div className="rounded-[22px] border border-[#e2b26a] bg-[#f6efe3] p-4">
         <div className="flex flex-wrap items-center gap-2.5">
           <p className="text-[13px] font-semibold text-[#79440f]">
-            {t("discover.selectedCount").replace("{count}", String(selectedCount))}
+            {t("discover.selectedCount").replace(
+              "{count}",
+              String(selectedCount),
+            )}
           </p>
           {selectedCount > 0 && (
             <div className="flex flex-wrap gap-1.5">
@@ -200,7 +231,9 @@ export function PlanClient({ temples: ALL }: { temples: TempleSummary[] }) {
             </div>
           )}
           {!canContinue && (
-            <p className="text-[11.5px] text-[#9a8f7b]">{t("discover.selectHint")}</p>
+            <p className="text-[11.5px] text-[#9a8f7b]">
+              {t("discover.selectHint")}
+            </p>
           )}
           <button
             type="button"

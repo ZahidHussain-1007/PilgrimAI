@@ -24,6 +24,8 @@ class PlanRequest(BaseModel):
     primary_temple_id: str | None = None
     timezone: Literal["Asia/Kolkata"] = "Asia/Kolkata"
     stay_mode: Literal["daily_return", "overnight"] = "daily_return"
+    allow_unconfirmed_stay: bool = False
+    time_grid_minutes: Literal[1, 5] = 1
     hotel_id: str | None = Field(default=None, max_length=100)
     avoid_climbing: bool = False
     traffic_buffer_percent: float = Field(default=15, ge=0, le=100)

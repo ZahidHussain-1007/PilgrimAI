@@ -58,7 +58,11 @@ def validate(req, places, schedule, matrix, options, budget):
         synthetic = req.model_copy(update={"temple_ids": list(dict.fromkeys(actual))})
         try:
             errors += timeline_validate(
-                synthetic, places, schedule, matrix, hotel=hotel
+                synthetic,
+                places,
+                schedule,
+                matrix,
+                hotel=hotel or options.get("overnight_area"),
             )
         except (KeyError, TypeError, ValueError, OverflowError):
             error("MALFORMED_TIMELINE")
@@ -79,6 +83,12 @@ def validate(req, places, schedule, matrix, options, budget):
                 )
     for day in days:
         items = day.get("items", [])
+        if req.time_grid_minutes > 1 and any(
+            minutes(i["start"]) % req.time_grid_minutes
+            or minutes(i["end"]) % req.time_grid_minutes
+            for i in items
+        ):
+            error("TIME_GRID_INVALID", day.get("date"))
         visits = [i for i in items if i.get("type") == "visit"]
         if not visits:
             error(
@@ -101,7 +111,8 @@ def validate(req, places, schedule, matrix, options, budget):
             )
         if travel > (240 if req.elderly or req.special != "none" else 360):
             warn("HIGH_TRAVEL_FATIGUE", day.get("date"), travel)
-        location = hotel["id"] if hotel and day != days[0] else "origin"
+        base = hotel or options.get("overnight_area")
+        location = base["id"] if base and day != days[0] else "origin"
         for item in items:
             if item.get("type") == "travel" and item.get("leg_complete"):
                 location = item.get("to_id")

@@ -606,3 +606,65 @@ Object.assign(planningV21Copy, {
     "रद्द होने की पुष्टि नहीं हुई। फिर प्रयास करें या नई योजना से पहले सहेजा अनुरोध जाँचें।",
   ],
 });
+Object.assign(planningV21Copy, {
+  travellerTotal: [
+    "Total travellers: {count}",
+    "మొత్తం ప్రయాణికులు: {count}",
+    "कुल यात्री: {count}",
+  ],
+  travellerValidation: [
+    "Include at least one adult or elder; the group may have at most 30 people.",
+    "కనీసం ఒక పెద్ద లేదా వృద్ధుడు ఉండాలి; బృందంలో గరిష్ఠంగా 30 మంది ఉండవచ్చు.",
+    "कम से कम एक वयस्क या बुज़ुर्ग शामिल करें; समूह में अधिकतम 30 लोग हो सकते हैं।",
+  ],
+  morePreferences: [
+    "More additional preferences",
+    "మరిన్ని అదనపు ప్రాధాన్యతలు",
+    "और अतिरिक्त प्राथमिकताएँ",
+  ],
+  travelBuffers: [
+    "Travel and comfort allowances",
+    "ప్రయాణం, విశ్రాంతి సమయాలు",
+    "यात्रा और आराम के समय",
+  ],
+  automaticStay: [
+    "Multi-day trips stay near destinations; one-day trips return the same day. Hotel details and transfers still need confirmation.",
+    "బహుళ రోజుల యాత్రలకు గమ్యస్థానాల వద్ద బస; ఒక రోజు యాత్రలకు అదే రోజు తిరుగు. హోటల్ వివరాలు, బదిలీల నిర్ధారణ అవసరం.",
+    "बहु-दिन की यात्रा में गंतव्य के पास रुकें; एक दिन की यात्रा में उसी दिन लौटें। होटल और आवागमन की पुष्टि अभी आवश्यक है।",
+  ],
+  conditionalStay: [
+    "Conditional route draft — no hotel has been verified. Overnight legs use the primary destination area, NOT a property or a confirmed room. Confirm the hotel, room capacity, price and extra transfers before relying on these times.",
+    "షరతులతో కూడిన మార్గ ముసాయిదా — హోటల్ నిర్ధారణ కాలేదు. రాత్రి బస దశలు ప్రధాన గమ్యస్థాన ప్రాంతాన్ని మాత్రమే సూచిస్తాయి; గది లేదా ఆస్తిని కాదు. సమయాలపై ఆధారపడే ముందు హోటల్, గది సామర్థ్యం, ధర, అదనపు ప్రయాణాన్ని నిర్ధారించండి.",
+    "सशर्त मार्ग प्रारूप — कोई होटल सत्यापित नहीं है। रात के चरण केवल मुख्य गंतव्य क्षेत्र को आधार मानते हैं, किसी होटल या पुष्ट कमरे को नहीं। समय पर भरोसा करने से पहले होटल, क्षमता, कीमत और अतिरिक्त आवागमन की पुष्टि करें।",
+  ],
+  originAmbiguous: [
+    "Choose the correct starting place below, or enter a more precise city/locality. Your other trip details are preserved.",
+    "క్రింద సరైన ప్రారంభ స్థలాన్ని ఎంచుకోండి లేదా మరింత ఖచ్చితమైన నగరం/ప్రాంతాన్ని నమోదు చేయండి. ఇతర యాత్ర వివరాలు అలాగే ఉంటాయి.",
+    "नीचे सही शुरुआती स्थान चुनें या अधिक सटीक शहर/इलाका दर्ज करें। यात्रा के बाकी विवरण सुरक्षित हैं।",
+  ],
+  originUnresolved: [
+    "The starting place could not be verified. Enter a fuller city/locality name or latitude,longitude and retry without re-entering the trip.",
+    "ప్రారంభ స్థలాన్ని నిర్ధారించలేకపోయాము. పూర్తి నగరం/ప్రాంతం పేరు లేదా అక్షాంశం,రేఖాంశం నమోదు చేసి మళ్లీ ప్రయత్నించండి.",
+    "शुरुआती स्थान सत्यापित नहीं हो सका। पूरा शहर/इलाका या अक्षांश,देशांतर लिखकर फिर प्रयास करें। बाकी यात्रा दोबारा न भरें।",
+  ],
+  retryOrigin: [
+    "Retry with this starting place",
+    "ఈ ప్రారంభ స్థలంతో మళ్లీ ప్రయత్నించు",
+    "इस शुरुआती स्थान से फिर प्रयास करें",
+  ],
+  startingPlace: [
+    "Starting city / locality or coordinates",
+    "ప్రారంభ నగరం / ప్రాంతం లేదా కోఆర్డినేట్లు",
+    "शुरुआती शहर / इलाका या निर्देशांक",
+  ],
+  timeGrid: [
+    "Timeline uses conservative five-minute planning blocks; routing estimates are rounded up, never shortened.",
+    "ప్రణాళిక ఐదు నిమిషాల దశలను ఉపయోగిస్తుంది; ప్రయాణ అంచనాలు తగ్గించకుండా పైకి గుండ్రంగా మార్చబడతాయి.",
+    "योजना पाँच मिनट के चरणों में है; यात्रा अनुमान घटाए नहीं जाते, ऊपर की ओर पूर्णांकित होते हैं।",
+  ],
+  TIME_GRID_INVALID: [
+    "The timeline does not match its five-minute planning grid.",
+    "సమయ పట్టిక ఐదు నిమిషాల ప్రణాళిక దశలతో సరిపోలడం లేదు.",
+    "समयरेखा पाँच मिनट के नियोजन चरणों से मेल नहीं खाती।",
+  ],
+});

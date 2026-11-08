@@ -3,6 +3,8 @@ export type PlanningRequest = {
   primary_temple_id?: string;
   timezone?: "Asia/Kolkata";
   stay_mode?: "daily_return" | "overnight";
+  allow_unconfirmed_stay?: boolean;
+  time_grid_minutes?: 1 | 5;
   hotel_id?: string | null;
   avoid_climbing?: boolean;
   daily_travel_limit_minutes?: number | null;
@@ -182,6 +184,7 @@ export type PlanResult = {
   options: {
     hotels: Record<string, unknown>[];
     restaurants: Record<string, unknown>[];
+    overnight_area?: Record<string, unknown>;
     selected_hotel?: Record<string, unknown> | null;
     notes?: string[];
   };
@@ -205,6 +208,12 @@ export type PlanningJob = {
   request: PlanningRequest;
   result: PlanResult | null;
   error?: string;
+  error_code?: string;
+  origin_candidates?: {
+    display_name: string;
+    latitude: number;
+    longitude: number;
+  }[];
   parent?: string;
   history?: { role: string; text: string; evidence?: unknown }[];
 };

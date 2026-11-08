@@ -79,7 +79,7 @@ export function PlanningExperience({
       <header
         className={
           fullscreen
-            ? "absolute bottom-28 left-1/2 z-20 flex w-[92vw] max-w-4xl -translate-x-1/2 flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#d8c19d] bg-[#fffaf1]/95 p-4 text-[#45382b]"
+            ? "absolute bottom-24 left-1/2 z-20 flex w-[92vw] max-w-3xl -translate-x-1/2 flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/25 bg-[#211b15]/80 px-5 py-4 text-[#fff5e6] shadow-2xl backdrop-blur-sm motion-safe:animate-[planning-panel-in_350ms_ease-out]"
             : "mb-4 flex flex-wrap items-center justify-between gap-3"
         }
       >
@@ -87,10 +87,10 @@ export function PlanningExperience({
           <p className="text-xs uppercase tracking-[.2em] text-[#a66621]">
             PilgrimAI
           </p>
-          <h1 className="mt-1 font-serif text-2xl sm:text-3xl">
+          <h1 className="mt-1 font-serif text-xl sm:text-2xl">
             {p("waiting")}
           </h1>
-          <p className="mt-2 text-xs text-[#9c6726]" role="status">
+          <p className="mt-2 text-xs text-[#d5b785]" role="status">
             {p(job.stage)}
           </p>
         </div>
@@ -101,13 +101,7 @@ export function PlanningExperience({
           {p("cancel")}
         </button>
       </header>
-      <div
-        className={
-          fullscreen
-            ? "h-full w-full"
-            : "space-y-4"
-        }
-      >
+      <div className={fullscreen ? "h-full w-full" : "space-y-4"}>
         <div
           className={
             fullscreen
@@ -117,6 +111,7 @@ export function PlanningExperience({
         >
           <TempleVideoPlayer
             fillViewport={fullscreen}
+            showControls={!fullscreen}
             items={items}
             index={Math.min(index, Math.max(0, items.length - 1))}
             onEnded={() =>

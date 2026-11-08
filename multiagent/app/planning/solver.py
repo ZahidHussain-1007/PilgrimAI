@@ -42,7 +42,8 @@ def _allowances(req, place=None):
         20 if req.elderly or req.special in {"elder", "wheel", "medical"} else 0
     )
     rest = max(req.rest_minutes, 20 if "family" in req.priorities else 0)
-    return visit, rest
+    grid = req.time_grid_minutes
+    return math.ceil(visit / grid) * grid, math.ceil(rest / grid) * grid
 
 
 def _journey(state, destination, matrix, req):
@@ -85,14 +86,19 @@ def _journey(state, destination, matrix, req):
                     "meal",
                     "meal_break",
                     s.now,
-                    s.now + req.meal_minutes,
+                    s.now
+                    + math.ceil(req.meal_minutes / req.time_grid_minutes)
+                    * req.time_grid_minutes,
                     meal=name,
                     venue="unconfirmed en-route stop",
                     verification="unconfirmed",
                     location_id=None,
                 )
             )
-            s.now += req.meal_minutes
+            s.now += (
+                math.ceil(req.meal_minutes / req.time_grid_minutes)
+                * req.time_grid_minutes
+            )
             s.meals.add(name)
             driven = 0
             continue
@@ -176,8 +182,17 @@ def _close(state, matrix, finish, req, hotel=None):
         if state.location == destination
         else _journey(state, destination, matrix, req)
     )
-    if s and hotel and state.day == 0 and destination == hotel["id"]:
-        at = max(s.now, hotel["check_in_minute"])
+    if (
+        s
+        and hotel
+        and hotel.get("kind") != "overnight_area"
+        and state.day == 0
+        and destination == hotel["id"]
+    ):
+        at = (
+            math.ceil(max(s.now, hotel["check_in_minute"]) / req.time_grid_minutes)
+            * req.time_grid_minutes
+        )
         if at > s.now:
             s.days[-1]["items"].append(
                 _item("wait", "wait_for_checkin", s.now, at, location_id=hotel["id"])
@@ -200,7 +215,9 @@ def _close(state, matrix, finish, req, hotel=None):
 def _nearby_meal(state, name, req, matrix, restaurants):
     """Only choose a venue when BOTH road transfers and dated hours fit the
     reserved meal block. Never convert a distance-only listing into a road leg."""
-    reserve = req.meal_minutes
+    reserve = (
+        math.ceil(req.meal_minutes / req.time_grid_minutes) * req.time_grid_minutes
+    )
     for venue in restaurants:
         a = matrix.get(state.location + ">" + venue["id"])
         b = matrix.get(venue["id"] + ">" + state.location)
@@ -279,7 +296,11 @@ def solve(
     hotel: dict | None = None,
     restaurants: list | None = None,
 ) -> dict:
-    start, finish = minutes(req.departure), minutes(req.finish)
+    start = (
+        math.ceil(minutes(req.departure) / req.time_grid_minutes)
+        * req.time_grid_minutes
+    )
+    finish = minutes(req.finish) // req.time_grid_minutes * req.time_grid_minutes
     states = [
         State(
             0,
@@ -321,18 +342,27 @@ def solve(
                         "buffer",
                         "arrival_buffer",
                         cursor,
-                        cursor + req.parking_buffer_minutes,
+                        cursor
+                        + math.ceil(req.parking_buffer_minutes / req.time_grid_minutes)
+                        * req.time_grid_minutes,
                     )
                 )
-                cursor += req.parking_buffer_minutes
+                cursor += (
+                    math.ceil(req.parking_buffer_minutes / req.time_grid_minutes)
+                    * req.time_grid_minutes
+                )
                 windows = tm["windows"].get(candidate.days[-1]["date"], [])
                 # Reserve any meal that would be skipped during a long wait/visit.
                 for name, target, earliest in MEALS:
                     prospective = min(
                         [
-                            max(cursor, a)
+                            math.ceil(max(cursor, a) / req.time_grid_minutes)
+                            * req.time_grid_minutes
                             for a, b in windows
-                            if max(cursor, a) + duration <= min(b, finish)
+                            if math.ceil(max(cursor, a) / req.time_grid_minutes)
+                            * req.time_grid_minutes
+                            + duration
+                            <= min(b, finish)
                         ]
                         or [finish + 1]
                     )
@@ -354,10 +384,18 @@ def solve(
                         items = candidate.days[-1]["items"]
                         cursor = candidate.now
                 slots = [
-                    max(cursor, a)
+                    math.ceil(max(cursor, a) / req.time_grid_minutes)
+                    * req.time_grid_minutes
                     for a, b in windows
-                    if max(cursor, a) + duration <= b
-                    and max(cursor, a) + duration + rest <= finish
+                    if math.ceil(max(cursor, a) / req.time_grid_minutes)
+                    * req.time_grid_minutes
+                    + duration
+                    <= b
+                    and math.ceil(max(cursor, a) / req.time_grid_minutes)
+                    * req.time_grid_minutes
+                    + duration
+                    + rest
+                    <= finish
                 ]
                 if not slots:
                     continue
@@ -399,7 +437,11 @@ def solve(
                             "items": [],
                         }
                     )
-                    if hotel and closed.day == req.days - 1:
+                    if (
+                        hotel
+                        and hotel.get("kind") != "overnight_area"
+                        and closed.day == req.days - 1
+                    ):
                         closed.days[-1]["items"].append(
                             _item(
                                 "checkout",
@@ -557,7 +599,7 @@ def validate(req, temples, result, matrix, hotel=None):
             error("DAY_UNPLANNED", [day.get("date")])
         if day["date"] != (req.start_date + timedelta(days=index)).isoformat():
             error("DATE_INVALID", [day["date"]])
-        cursor = start
+        cursor = math.ceil(start / req.time_grid_minutes) * req.time_grid_minutes
         driving_since_break = 0
         last_arrival = start - 10
         location = hotel["id"] if hotel and index > 0 else "origin"

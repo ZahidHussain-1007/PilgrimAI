@@ -239,7 +239,7 @@ def _run(job_id, owner):
             )
         result = {
             **schedule,
-            "schema_version": 21,
+            "schema_version": 23,
             "request": req.model_dump(mode="json"),
             "temples": temples,
             "destinations": temples + candidates,
@@ -321,6 +321,13 @@ def _run(job_id, owner):
             job = get(job_id, owner)
             if job["status"] != "cancelled":
                 job.update(status="failed", stage="failed", error=str(exc)[:350])
+                if hasattr(exc, "candidates"):
+                    job["error_code"] = "originAmbiguous"
+                    job["origin_candidates"] = [
+                        c.model_dump(mode="json") for c in exc.candidates[:5]
+                    ]
+                elif "resolve travel place" in str(exc):
+                    job["error_code"] = "originUnresolved"
                 save(job)
     finally:
         with LOCK:
