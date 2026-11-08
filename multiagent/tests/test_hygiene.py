@@ -66,6 +66,14 @@ class _AuthErr(Exception):
 
 
 def test_dead_key_is_revoked_and_skipped(monkeypatch):
+    # Isolate the entire provider pool from developer .env credentials.
+    for index in range(1, 7):
+        monkeypatch.setattr(llm_mod.settings, f"groq_api_key_{index}", None)
+    monkeypatch.setattr(llm_mod.settings, "openaikey", None)
+    monkeypatch.setattr(llm_mod.settings, "google_ai_stdio", None)
+    monkeypatch.setattr(llm_mod, "_rotation_offset", 0)
+    monkeypatch.setattr(llm_mod, "_revoked_keys", set())
+    monkeypatch.setattr(llm_mod, "_provider_cooldown", {})
     constructed: list[str] = []
 
     class FakeGroq:

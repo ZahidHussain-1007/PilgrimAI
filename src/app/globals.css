@@ -44,3 +44,5 @@
 [data-lang="te"] .stats-strip .stat-label, [data-lang="hi"] .stats-strip .stat-label { font-size:10px; }
 [data-lang="te"] .hero-desc, [data-lang="hi"] .hero-desc { font-size:13px; line-height:1.5; }
 [data-lang="te"] .nav-link, [data-lang="hi"] .nav-link { font-size:13px; }
+
+@keyframes planning-panel-in {from {opacity:0;transform:translateY(12px)} to {opacity:1;transform:translateY(0)}}

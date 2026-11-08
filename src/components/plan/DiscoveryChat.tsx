@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react"
 import { templeChatApi } from "../../services/api/templeChat.api"
 import type { TempleSummary } from "../../lib/temples"
 import { useT } from "../../lib/i18n"
+import { planningT } from "../../lib/planningCopy"
 import { shortTempleName } from "./trailTempleData"
 
 type ChatMsg = {
@@ -61,7 +62,8 @@ export function DiscoveryChat({
   selectedIds: string[]
   onAdd: (id: string) => void
 }) {
-  const { t } = useT()
+  const { t, lang } = useT()
+  const [routeOrigin, setRouteOrigin] = useState("")
   const [initial] = useState(() => {
     const stored = loadStored()
     const restored = Boolean(stored && stored.some((m) => m.role === "user"))
@@ -147,7 +149,7 @@ export function DiscoveryChat({
     setBusy(true)
     setError(null)
     try {
-      const reply = await templeChatApi.send(text)
+      const reply = await templeChatApi.send(text, routeOrigin.trim() || undefined)
       const replyText = reply?.content || ""
       // server-validated catalog names win; substring match stays as fallback
       const fromServer = (reply?.suggestions ?? [])
@@ -202,6 +204,12 @@ export function DiscoveryChat({
         >
           + {t("discover.newChat")}
         </button>
+      </div>
+
+      <div className="shrink-0 border-b border-[#efe6d4] px-4 py-2">
+        <label className="block text-[10px] text-[#796b5d]">{planningT(lang, "routeOrigin")}
+          <input aria-label={planningT(lang, "routeOrigin")} value={routeOrigin} maxLength={160} onChange={e=>setRouteOrigin(e.target.value)} className="mt-1 h-8 w-full rounded-lg border border-[#e9d8c1] bg-white px-2 text-xs" />
+        </label>
       </div>
 
       <div

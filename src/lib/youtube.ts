@@ -23,9 +23,7 @@ export function youtubeVideoId(url: string | null | undefined): string | null {
   return null
 }
 
-export function youtubeEmbedUrl(
-  url: string | null | undefined,
-): string | null {
+export function youtubeEmbedUrl(url: string | null | undefined): string | null {
   const id = youtubeVideoId(url)
   if (!id) return null
   return `https://www.youtube-nocookie.com/embed/${id}?rel=0`
@@ -34,4 +32,30 @@ export function youtubeEmbedUrl(
 /** Canonical watch URL (external "Watch on YouTube" link). */
 export function youtubeWatchUrl(videoId: string): string {
   return `https://www.youtube.com/watch?v=${videoId}`
+}
+
+/** Best-effort request only: YouTube may ignore this deprecated quality API. */
+export function requestHighestVideoQuality(player: {
+  getAvailableQualityLevels?: () => string[];
+  setPlaybackQuality?: (quality: string) => void;
+  getPlaybackQuality?: () => string;
+}): string {
+  try {
+    const offered = player.getAvailableQualityLevels?.() || [];
+    const best = [
+      "highres",
+      "hd2160",
+      "hd1440",
+      "hd1080",
+      "hd720",
+      "large",
+      "medium",
+      "small",
+      "tiny",
+    ].find((q) => offered.includes(q));
+    if (best) player.setPlaybackQuality?.(best);
+    return player.getPlaybackQuality?.() || "adaptive";
+  } catch {
+    return "adaptive";
+  }
 }

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest"
-import { FALLBACK_VIDEO_URL, youtubeEmbedUrl, youtubeVideoId } from "../youtube"
+import {
+  FALLBACK_VIDEO_URL,
+  youtubeEmbedUrl,
+  youtubeVideoId,
+} from "../youtube";
 
 describe("v19 youtube helpers", () => {
   it("extracts ids from youtu.be links (user's provided format)", () => {
@@ -31,3 +35,24 @@ describe("v19 youtube helpers", () => {
     expect(youtubeEmbedUrl(FALLBACK_VIDEO_URL)).toContain("youtube-nocookie")
   })
 })
+
+import { requestHighestVideoQuality } from "../youtube";
+it("requests the highest offered video quality but reports actual/adaptive quality honestly", () => {
+  const requested: string[] = [];
+  expect(
+    requestHighestVideoQuality({
+      getAvailableQualityLevels: () => ["hd720", "hd1080", "medium"],
+      setPlaybackQuality: (q) => requested.push(q),
+      getPlaybackQuality: () => "hd720",
+    }),
+  ).toBe("hd720");
+  expect(requested).toEqual(["hd1080"]);
+  expect(requestHighestVideoQuality({})).toBe("adaptive");
+  expect(
+    requestHighestVideoQuality({
+      getAvailableQualityLevels: () => {
+        throw new Error("unsupported");
+      },
+    }),
+  ).toBe("adaptive");
+});

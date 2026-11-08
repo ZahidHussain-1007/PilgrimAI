@@ -1,4 +1,4 @@
-import { request } from "./client"
+import { planningFetch } from "../../lib/planning"
 import { getStoredLanguage } from "../../lib/prefs"
 
 export type TempleSuggestReply = {
@@ -12,19 +12,14 @@ export type TempleSuggestReply = {
 const SESSION_KEY = "pilgrim:temple_session_id"
 
 /** Plan-page discovery chat — scoped to the23-temple catalog.
- *  Talks to Next /api/plan/temple-chat → multiagent /temple-suggest. */
+ *  Talks to signed Next /api/planning/discover → shared travel capability. */
 export const templeChatApi = {
-  send: async (message: string): Promise<TempleSuggestReply> => {
-    const sessionId =
-      typeof window !== "undefined"
-        ? window.localStorage.getItem(SESSION_KEY) || undefined
-        : undefined
-
-    const reply = await request<TempleSuggestReply>("/plan/temple-chat", {
+  send: async (message: string, origin?: string): Promise<TempleSuggestReply> => {
+    const reply = await planningFetch<TempleSuggestReply>("discover", {
       method: "POST",
       body: JSON.stringify({
         message,
-        sessionId,
+        origin,
         language: getStoredLanguage(),
       }),
     })

@@ -51,8 +51,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="brand relative z-10"><span className="brand-mark">ॐ</span><span>PilgrimAI</span></div>
       <nav className="nav-list relative z-10" aria-label="Main navigation">
         {links.map(({ href, labelKey, icon }) => {
-          const active = pathname === href || (href !== "/chat" && pathname.startsWith(`${href}/`))
-          return <Link key={href} href={href} onClick={() => setOpen(false)} aria-current={active ? "page" : undefined} className={`nav-link${active ? " active" : ""}`}><span className="nav-icon">{icon}</span>{t(labelKey)}</Link>
+          const active = (href === "/itineraries" && pathname.startsWith("/itinerary")) || pathname === href || (href !== "/chat" && pathname.startsWith(`${href}/`))
+          return <Link key={href} href={href === "/itineraries" && !user ? "/itinerary" : href} onClick={() => setOpen(false)} aria-current={active ? "page" : undefined} className={`nav-link${active ? " active" : ""}`}><span className="nav-icon">{icon}</span>{t(labelKey)}</Link>
         })}
       </nav>
       <div className="relative z-10 mt-auto max-w-full px-1 pb-3 pt-3">
