@@ -1,0 +1,1094 @@
+"""Accommodation agent - where to stay (hotels/lodges/rooms) and where to eat
+(restaurants/tiffin/cafes).
+
+Two labeled data layers; every evidence item carries `source_tier`:
+  1. internal_dataset - curated static JSON:
+       data/accommodations/*.json (142 files, all 23 temples, booking links)
+       data/restaurants/*.json  (120 files, 10 schema variants, verified dates)
+  2. open-data - LIVE OpenStreetMap radius search via the Overpass API
+       (keyless; multi-instance failover; cached; static data still answers
+       when the live layer is down)
+
+No vector RAG: ~360 small structured records -> deterministic filter + geo-rank
+is the correct tool (RAG belongs to long unstructured text, see temple agent).
+"""
+from __future__ import annotations
+
+import json
+import logging
+import math
+import re
+import time
+import urllib.parse
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from difflib import SequenceMatcher
+from pathlib import Path
+from typing import Any
+
+from app.core.config import settings
+from app.travel.resolver import (
+    TravelResolverClarificationError,
+    resolve_place,
+)
+
+logger = logging.getLogger(__name__)
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+ACC_DIR = PROJECT_ROOT / "data" / "accommodations"
+FOOD_DIR = PROJECT_ROOT / "data" / "restaurants"
+
+MAX_STATIC = 5
+MAX_OSM = 4
+
+_STOPWORDS = {
+    "the", "and", "for", "near", "from", "with", "please", "where", "what",
+    "give", "some", "good", "best", "top", "any", "around", "into", "that",
+    "this", "tell", "about", "need", "want", "looking", "show", "find",
+    "hotel", "hotels", "room", "rooms", "stay", "lodging", "lodge",
+    "restaurant", "restaurants", "cafe", "cafes", "food", "eat", "dining",
+    "tiffin", "meals", "temple", "temples", "nearby", "available", "place",
+}
+
+_CONTENT_REF_RE = re.compile(r"\s*:contentReference\[[^\]]*\]\{[^}]*\}")
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+_hotels_cache: list[dict[str, Any]] | None = None
+_restaurants_cache: list[dict[str, Any]] | None = None
+
+
+# ---------------------------------------------------------------------------
+# static dataset loaders (tolerant: restaurants have 10 schema variants)
+# ---------------------------------------------------------------------------
+
+def _clean_text(value: Any, limit: int = 350) -> str:
+    text = str(value or "").strip()
+    text = _CONTENT_REF_RE.sub("", text)
+    return text[:limit]
+
+
+def _tokens(text: Any) -> set[str]:
+    return {
+        t for t in _TOKEN_RE.findall(str(text or "").lower())
+        if len(t) >= 3 and t not in _STOPWORDS
+    }
+
+
+def _unwrap(value: Any) -> Any:
+    """{"value": x, "confidence": ...} -> x ; plain value -> value"""
+    if isinstance(value, dict) and "value" in value:
+        return value.get("value")
+    return value
+
+
+def _is_specific_booking_url(url: str) -> bool:
+    """A booking link must lead somewhere useful for THIS hotel.
+
+    Dataset scraping artifacts include site homepages and bare section
+    bookmarks (e.g. a Google Hotels page with no query/entity), which send
+    users to a generic search instead of the hotel. Drop those; keep every
+    URL that carries an identifier, a query, or a deeper path.
+    """
+    cleaned = str(url or "").strip().rstrip("/")
+    if not cleaned.startswith(("http://", "https://")):
+        return False
+    parsed = urllib.parse.urlparse(cleaned)
+    path = parsed.path.rstrip("/")
+    if not path:
+        # Bare homepage: useless platform root (makemytrip.com, goibibo.com…)
+        # UNLESS it carries a query (maps.google.com/?q=… is a real target).
+        # Official hotel homepages are NOT lost: they travel via the
+        # separate `website` field in evidence.
+        return bool(parsed.query)
+    if path in ("/travel/hotels", "/hotels") and not parsed.query:
+        return False  # section bookmark without a specific hotel
+    return True
+
+
+def _norm_hotel(raw: dict, meta: dict) -> dict[str, Any]:
+    booking = {
+        str(k): str(v)
+        for k, v in (raw.get("booking_links") or {}).items()
+        if isinstance(v, str) and v.startswith("http") and _is_specific_booking_url(v)
+    }
+    ratings = raw.get("ratings") or {}
+    record = {
+        "temple_id": raw.get("temple_id") or meta.get("temple_id") or "",
+        "temple_name": str(meta.get("associated_temple") or "").strip(),
+        "name": str(raw.get("hotel_name") or "").strip(),
+        "hotel_type": str(raw.get("hotel_type") or "").strip(),
+        "address": str(raw.get("address") or "").strip(),
+        "price_range": str(raw.get("price_range") or "").strip(),
+        "rating": str(ratings.get("rating") or "").strip(),
+        "rating_platform": str(ratings.get("platform") or "").strip(),
+        "booking_links": booking,
+        "amenities": [
+            str(a).strip()
+            for a in (raw.get("amenities") or [])
+            if isinstance(a, str) and a.strip()
+        ][:8],
+        "check_in": str(raw.get("check_in_time") or "").strip(),
+        "check_out": str(raw.get("check_out_time") or "").strip(),
+        "phones": [
+            str(p).strip()
+            for p in (raw.get("contact_numbers") or [])
+            if isinstance(p, str) and p.strip()
+        ][:3],
+        "map_link": str(raw.get("google_map_link") or "").strip(),
+        "website": str(raw.get("official_website") or "").strip(),
+        "about": _clean_text(raw.get("about")),
+    }
+    record["_haystack"] = _tokens(
+        f"{record['temple_name']} {record['address']} {record['name']} "
+        f"{record['hotel_type']}"
+    )
+    record["_place_tokens"] = _tokens(f"{record['temple_name']} {record['address']}")
+    record["_name_tokens"] = _tokens(record["name"])
+    return record
+
+
+def _norm_restaurant(raw: dict) -> dict[str, Any]:
+    temple = raw.get("associatedTemple") or {}
+    location = raw.get("location") or {}
+    meta = raw.get("metadata") or {}
+
+    name = raw.get("restaurantName")
+    if isinstance(name, dict):
+        name = name.get("value")
+    name = str(name or "").strip()
+
+    address = location.get("fullAddress")
+    if not address:
+        addr = location.get("address")
+        address = addr.get("value") if isinstance(addr, dict) else addr
+    address = str(address or location.get("landmark") or "").strip()
+
+    # distance from temple: number | {"value": x} | walkingDistance dict
+    travel = raw.get("travelInformation") or {}
+    distance = _unwrap(travel.get("distanceFromTempleKm"))
+    if distance is None:
+        legacy = raw.get("distanceFromTemple") or {}
+        walk = legacy.get("walkingDistance")
+        distance = _unwrap(walk)
+        if distance is None:
+            distance = _unwrap(legacy.get("drivingDistance"))
+    try:
+        distance = round(float(distance), 2) if distance is not None else None
+    except (TypeError, ValueError):
+        distance = None
+
+    prices = raw.get("priceInformation") or {}
+    business = raw.get("businessInformation") or {}
+    customer = raw.get("customerInformation") or {}
+    dietary = raw.get("dietaryInformation") or {}
+    food_type = raw.get("foodType") or {}
+    contact = raw.get("contactInformation") or {}
+    phone = contact.get("phoneNumber") or (raw.get("contact") or {}).get("phone")
+    hours = raw.get("workingHours") or {}
+
+    veg = dietary.get("vegetarian")
+    if veg is None:
+        veg = food_type.get("vegetarian")
+    pure_veg = dietary.get("pureVegetarian")
+    if pure_veg is None:
+        pure_veg = food_type.get("pureVeg")
+
+    rating = customer.get("googleRating")
+    if rating is None:
+        rating = business.get("rating")
+    reviews = customer.get("totalReviews")
+    if reviews is None:
+        reviews = business.get("reviewCount")
+
+    status = str(raw.get("businessStatus") or "").strip().lower()
+    is_open = "closed" not in status
+
+    hours_text = ""
+    if hours.get("openingTime") and hours.get("closingTime"):
+        days = hours.get("workingDays") or ""
+        hours_text = f"{hours['openingTime']} - {hours['closingTime']}"
+        if isinstance(days, str) and days:
+            hours_text = f"{hours_text} ({days})"
+
+    record = {
+        "temple_id": str(temple.get("templeId") or "").strip(),
+        "temple_name": str(temple.get("templeName") or "").strip(),
+        "name": name,
+        "city": str(location.get("city") or "").strip(),
+        "address": address,
+        "cuisine": [
+            str(c).strip()
+            for c in (
+                (raw.get("basicInformation") or {}).get("cuisineType")
+                or (raw.get("cuisine") or {}).get("types")
+                or []
+            )
+            if isinstance(c, str) and c.strip()
+        ][:6],
+        "vegetarian": bool(veg) if veg is not None else None,
+        "pure_veg": bool(pure_veg) if pure_veg is not None else None,
+        "price_category": str(
+            prices.get("priceCategory") or business.get("priceRange") or ""
+        ).strip(),
+        "average_cost_for_one": _unwrap(prices.get("averageCostForOne")),
+        "average_cost_for_two": _unwrap(prices.get("averageCostForTwo")),
+        "rating": rating,
+        "reviews": reviews,
+        "hours": hours_text,
+        "phone": str(phone or "").strip(),
+        "maps_link": str(raw.get("googleMapsLink") or "").strip(),
+        "distance_km": distance,
+        "open": is_open,
+        "last_verified": str(meta.get("lastVerified") or "").strip(),
+        "dataset_status": str(meta.get("status") or "").strip(),
+    }
+    record["_haystack"] = _tokens(
+        f"{record['temple_name']} {record['city']} {record['address']} "
+        f"{record['name']} {' '.join(record['cuisine'])}"
+    )
+    record["_place_tokens"] = _tokens(
+        f"{record['temple_name']} {record['city']} {record['address']}"
+    )
+    record["_name_tokens"] = _tokens(record["name"])
+    return record
+
+
+def _load_hotels() -> list[dict[str, Any]]:
+    global _hotels_cache
+    if _hotels_cache is not None:
+        return _hotels_cache
+
+    records: list[dict[str, Any]] = []
+    for path in sorted(ACC_DIR.glob("*.json")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        meta = {
+            "associated_temple": data.get("associated_temple"),
+            "temple_id": data.get("temple_id"),
+        }
+        for hotel in data.get("hotels") or []:
+            record = _norm_hotel(hotel, meta)
+            if record["name"]:
+                records.append(record)
+    _hotels_cache = records
+    return records
+
+
+def _load_restaurants() -> list[dict[str, Any]]:
+    global _restaurants_cache
+    if _restaurants_cache is not None:
+        return _restaurants_cache
+
+    records: list[dict[str, Any]] = []
+    for path in sorted(FOOD_DIR.glob("*.json")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        record = _norm_restaurant(data)
+        if record["name"]:
+            records.append(record)
+    _restaurants_cache = records
+    return records
+
+
+# ---------------------------------------------------------------------------
+# static selection: temple_ids (registry-resolved) -> place tokens -> names
+# ---------------------------------------------------------------------------
+
+# v15 (audit D07): "within 2 km" must NEVER become a ₹2,000 cap — a cap
+# counts only when a currency marker (₹ / rs / inr / rupees) is present
+# in the match, and the k/thousand suffix must be a whole word ("km" is
+# not "kilo-thousand"). All valid caps are collected; the most
+# conservative (minimum) wins so a later "under ₹200" cannot be shadowed.
+_MAX_PRICE_RE = re.compile(
+    r"(?:under|below|within|upto|up to|less than|max(?:imum)?(?: of)?"
+    r"|budget(?: of)?)\s*"
+    r"(?:₹|inr\.?\s+|rs\.?\s+|rupees?\s+|₹\s*)?"
+    r"(\d[\d,]*(?:\.\d+)?)\s*(?:k\b|thousand\b)?"
+    r"[\s]*(?:₹|rupees?\b|p\.?a\.?\b|per\b)?",
+    re.IGNORECASE,
+)
+_CURRENCY_MARK_RE = re.compile(r"₹|\brs\.?\b|\binr\b|\brupees?\b", re.IGNORECASE)
+_OCCUPANCY_RE = re.compile(
+    r"\b(?:family of\s*\d+|\d+\s*(?:adults?|persons?|people|guests?)"
+    r"|occupancy|triple[\s-]?sharing|double[\s-]?sharing|extra\s+bed)\b",
+    re.IGNORECASE,
+)
+
+
+def _wants_occupancy(question: str) -> bool:
+    return bool(_OCCUPANCY_RE.search(question or ""))
+
+
+_WITHIN_KM_RE = re.compile(
+    r"\bwithin\s+(\d+(?:\.\d+)?)\s*km\b", re.IGNORECASE
+)
+
+
+def _max_price_rupees(question: str) -> float | None:
+    caps: list[float] = []
+    for match in _MAX_PRICE_RE.finditer(question or ""):
+        if not _CURRENCY_MARK_RE.search(match.group(0)):
+            continue  # no currency marker → not money (audit D07/C09)
+        try:
+            value = float(match.group(1).replace(",", ""))
+        except ValueError:
+            continue
+        caps.append(value)
+    if not caps:
+        return None
+    return min(caps)
+
+
+_AC_RE = re.compile(
+    r"\bac\b|\ba/c\b|air[\s-]?condition(?:ed|ing|er)?", re.IGNORECASE
+)
+_AC_NEGATED_RE = re.compile(
+    r"\b(?:non[\s-]?ac|without\s+(?:an?\s+)?ac|no\s+ac"
+    r"|non[\s-]?air[\s-]?condition(?:ed)?)\b",
+    re.IGNORECASE,
+)
+
+
+def _wants_ac(question: str) -> bool:
+    """v15 (audit D07): "family accommodation" must NOT trigger the AC
+    filter (whole-word match only), and an explicit "non-AC" request is
+    the opposite preference — never treated as wanting AC."""
+    text = question or ""
+    if _AC_NEGATED_RE.search(text):
+        return False
+    return bool(_AC_RE.search(text))
+
+
+def _within_km(question: str) -> float | None:
+    match = _WITHIN_KM_RE.search(question or "")
+    if not match:
+        return None
+    try:
+        return float(match.group(1))
+    except ValueError:
+        return None
+
+
+def _hotel_price_upper(price_range: Any) -> float | None:
+    """'₹750–₹1,100 per night' -> 1100.0 (worst-case bound)."""
+    if price_range is None:
+        return None
+    values: list[float] = []
+    for raw in re.findall(r"\d[\d,]*(?:\.\d+)?", str(price_range)):
+        try:
+            values.append(float(raw.replace(",", "")))
+        except ValueError:
+            continue
+    return max(values) if values else None
+
+
+def _restaurant_ceiling(record: dict, per_person: bool) -> float | None:
+    """Numeric ceiling the hard price filter can verify. Unknown -> None."""
+    if per_person:
+        cost = record.get("average_cost_for_one")
+        if cost is None and record.get("average_cost_for_two") is not None:
+            try:
+                return float(record["average_cost_for_two"]) / 2.0
+            except (TypeError, ValueError):
+                return None
+    else:
+        cost = record.get("average_cost_for_two")
+        if cost is None and record.get("average_cost_for_one") is not None:
+            try:
+                return float(record["average_cost_for_one"]) * 2.0
+            except (TypeError, ValueError):
+                return None
+    try:
+        return float(cost) if cost is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _enforce_post_merge_constraints(
+    evidence: list[dict[str, Any]],
+    question: str,
+    kind: str,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Hard dietary/price/radius/AC constraints applied to the MERGED
+    result list (static dataset + live OSM). Returns (kept, drop_counts).
+
+    Rules (audit D06/D07):
+      * pure-veg/Jain → only records with pure_veg is True; live/unknown
+        diet never satisfies a strict request;
+      * plain vegetarian → vegetarian is True (unknown ≠ match);
+      * price cap → record ceiling must exist and be ≤ cap (unknown ≠ match);
+      * radius → distance_km must exist and be ≤ radius (hotels without a
+        recorded distance are KEPT here — the separate radius_unverified
+        note discloses that honestly);
+      * AC → amenities must state air conditioning (live/unknown ≠ match).
+    """
+    wants_pure = any(
+        phrase in (question or "").lower()
+        for phrase in ("pure veg", "pure vegetarian", "pureveg", "pure-veg", "jain")
+    )
+    wants_veg = wants_pure or bool(_tokens(question) & {"veg", "vegetarian"})
+    max_price = _max_price_rupees(question)
+    within_km = _within_km(question)
+    wants_ac = kind == "hotel" and _wants_ac(question)
+    if not (wants_pure or wants_veg or max_price is not None
+            or within_km is not None or wants_ac):
+        return evidence, {}
+
+    drops: dict[str, int] = {}
+    kept: list[dict[str, Any]] = []
+    for item in evidence:
+        item_kind = item.get("kind")
+        if kind == "restaurant":
+            target = item_kind in {"restaurant", "poi"}
+        elif kind == "hotel":
+            target = item_kind in {"hotel", "poi"}
+        else:
+            target = False
+        if not target:
+            kept.append(item)
+            continue
+
+        drop: str | None = None
+        if kind == "restaurant" and wants_pure:
+            if item.get("pure_veg") is not True:
+                drop = "diet not verified as pure-veg"
+        elif kind == "restaurant" and wants_veg:
+            if item.get("vegetarian") is not True:
+                drop = "diet not verified as vegetarian"
+
+        if drop is None and max_price is not None:
+            if kind == "restaurant":
+                ceiling = _restaurant_ceiling(
+                    item, "per person" in (question or "").lower()
+                )
+            else:
+                ceiling = _hotel_price_upper(item.get("price_range"))
+            if ceiling is None:
+                drop = "price not verified under the requested cap"
+            elif ceiling > max_price:
+                drop = "price over the requested cap"
+
+        if drop is None and within_km is not None:
+            distance = item.get("distance_km")
+            if distance is not None:
+                try:
+                    if float(distance) > within_km:
+                        drop = "outside the requested radius"
+                except (TypeError, ValueError):
+                    drop = "distance unverified for the requested radius"
+            # hotels without distance: kept + disclosed by radius note
+
+        if drop is None and wants_ac:
+            amenities = [str(a).lower() for a in (item.get("amenities") or [])]
+            if not any(
+                "air condition" in a or a in {"ac", "a/c"} for a in amenities
+            ):
+                drop = "AC not verified"
+
+        if drop:
+            drops[drop] = drops.get(drop, 0) + 1
+        else:
+            kept.append(item)
+    return kept, drops
+
+
+def _select_static(
+    records: list[dict[str, Any]],
+    *,
+    question: str,
+    entities: list[str],
+    temple_ids: list[str] | None,
+    kind: str,
+) -> list[dict[str, Any]]:
+    """Strict selection order: temple ids -> PLACE tokens (temple/city/address
+    vocabulary only) -> entity mentions (place vocabulary) -> exact name lookup.
+
+    Food/quality words (pure, veg, vegetarian, budget...) are FILTERS applied
+    after a place is pinned; they never select records on their own. This
+    prevents cross-temple leakage ("pure veg near Bhadrachalam" must only
+    return Bhadrachalam records)."""
+    selected: list[dict[str, Any]] = []
+
+    if temple_ids:
+        wanted = set(temple_ids)
+        selected = [r for r in records if r.get("temple_id") in wanted]
+
+    place_vocab: set[str] = set()
+    name_vocab: set[str] = set()
+    if not selected:
+        for record in records:
+            place_vocab |= record["_place_tokens"]
+            name_vocab |= record["_name_tokens"]
+
+        q_place = _tokens(question) & place_vocab
+        if q_place:
+            selected = [r for r in records if q_place & r["_place_tokens"]]
+
+    if not selected:
+        for mention in entities or []:
+            m_tokens = _tokens(mention)
+            if not m_tokens:
+                continue
+            selected = [r for r in records if m_tokens & r["_place_tokens"]]
+            if selected:
+                break
+
+    if not selected:
+        q_names = _tokens(question) & name_vocab
+        if q_names:
+            selected = [r for r in records if q_names & r["_name_tokens"]]
+
+    # --- HARD dietary / price / facility constraints (audit D06/D07) ---
+    # Religious dietary requirements are NEVER silently relaxed: a pure-
+    # vegetarian request only matches records explicitly marked pure_veg;
+    # unknown is not a match. Same rule for explicit price caps and AC.
+    q_lower = (question or "").lower()
+    wants_pure = any(
+        phrase in q_lower
+        for phrase in ("pure veg", "pure vegetarian", "pureveg", "pure-veg")
+    )
+    wants_veg = wants_pure or bool(
+        _tokens(question) & {"veg", "vegetarian"}
+    )
+
+    if selected and kind == "restaurant" and wants_pure:
+        selected = [r for r in selected if r.get("pure_veg") is True]
+    elif selected and kind == "restaurant" and wants_veg:
+        vegged = [r for r in selected if r.get("vegetarian") is True]
+        if vegged:
+            selected = vegged
+
+    max_price = _max_price_rupees(question)
+    if selected and max_price is not None:
+        if kind == "restaurant":
+            selected = [
+                r for r in selected
+                if _restaurant_ceiling(r, "per person" in q_lower)
+                is not None
+                and _restaurant_ceiling(r, "per person" in q_lower)
+                <= max_price
+            ]
+        elif kind == "hotel":
+            kept = []
+            for r in selected:
+                upper = _hotel_price_upper(r.get("price_range"))
+                if upper is not None and upper <= max_price:
+                    kept.append(r)
+            selected = kept
+
+    wants_ac = _wants_ac(question)
+    if selected and kind == "hotel" and wants_ac:
+        kept = []
+        for r in selected:
+            amenities = [str(a).lower() for a in (r.get("amenities") or [])]
+            if any(
+                "air condition" in a or a in {"ac", "a/c"}
+                for a in amenities
+            ):
+                kept.append(r)
+        selected = kept
+
+    within_km = _within_km(question)
+    if selected and kind == "restaurant" and within_km is not None:
+        selected = [
+            r for r in selected
+            if r.get("distance_km") is not None
+            and float(r["distance_km"]) <= within_km
+        ]
+
+    if kind == "restaurant":
+        selected.sort(
+            key=lambda r: (
+                0 if r.get("open") else 1,
+                r.get("distance_km") if r.get("distance_km") is not None else 999,
+            )
+        )
+    return selected
+
+
+# ---------------------------------------------------------------------------
+# LIVE layer: OpenStreetMap Overpass radius search (keyless, failover)
+# ---------------------------------------------------------------------------
+
+_OVERPASS_FILTERS = {
+    "hotel": ("tourism", r"^(hotel|guest_house|hostel|lodging|motel)$"),
+    "restaurant": ("amenity", r"^(restaurant|cafe|fast_food)$"),
+    # live facility / emergency kinds (keyless OpenStreetMap)
+    "hospital": ("amenity", r"^(hospital|clinic)$"),
+    "pharmacy": ("amenity", r"^pharmacy$"),
+    "police": ("amenity", r"^police$"),
+    "atm": ("amenity", r"^atm$"),
+    "parking": ("amenity", r"^parking$"),
+    "fuel": ("amenity", r"^fuel$"),
+    "bus_station": ("amenity", r"^bus_station$"),
+    "fire_station": ("amenity", r"^fire_station$"),
+    "ambulance": ("emergency", r"^ambulance_station$"),
+    "attraction": (
+        "tourism",
+        r"^(attraction|museum|viewpoint|artwork|gallery|zoo|theme_park)$",
+    ),
+}
+
+
+def _haversine_km(a_lat: float, a_lng: float, b_lat: float, b_lng: float) -> float:
+    r = 6371.0
+    p1, p2 = math.radians(a_lat), math.radians(b_lat)
+    dp = math.radians(b_lat - a_lat)
+    dl = math.radians(b_lng - a_lng)
+    h = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return round(2 * r * math.asin(math.sqrt(h)), 2)
+
+
+def _overpass_search(
+    kind: str,
+    lat: float,
+    lng: float,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Returns (pois, error_message|None). Successes are cached (default TTL);
+    failures are cached only briefly (short TTL) so the live layer retries."""
+    from app.travel.cache import get_fact, set_fact
+
+    radius = (
+        settings.overpass_food_radius_m
+        if kind == "restaurant"
+        else settings.overpass_radius_m
+    )
+
+    cached = get_fact(
+        "places", "overpass", kind, f"{lat:.3f}", f"{lng:.3f}", str(radius)
+    )
+    if cached and cached.get("pois") is not None:
+        return list(cached.get("pois") or []), cached.get("error")
+
+    tag_key, tag_value = _OVERPASS_FILTERS.get(kind, _OVERPASS_FILTERS["hotel"])
+    query = (
+        f'[out:json][timeout:8];'
+        f'(nwr["{tag_key}"~"{tag_value}"]'
+        f'(around:{radius},{lat},{lng}););'
+        f'out tags center {settings.overpass_max_pois};'
+    )
+
+    # Parallel failover: instances are tried CONCURRENTLY so a global outage
+    # costs one timeout (~overpass_timeout_s), not one timeout per instance.
+    urls = [u.strip() for u in settings.overpass_urls.split(",") if u.strip()]
+    last_error = "overpass unavailable"
+    payload: dict | None = None
+
+    def _attempt(base: str) -> dict:
+        request = urllib.request.Request(
+            base,
+            data=urllib.parse.urlencode({"data": query}).encode("utf-8"),
+            headers={"User-Agent": "PilgrimAI/1.0 (nearby search)"},
+            method="POST",
+        )
+        with urllib.request.urlopen(
+            request, timeout=settings.overpass_timeout_s
+        ) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    if urls:
+        pool = ThreadPoolExecutor(max_workers=min(4, len(urls)))
+        try:
+            futures = {pool.submit(_attempt, base): base for base in urls}
+            for future in as_completed(
+                futures, timeout=settings.overpass_timeout_s + 2.0
+            ):
+                base = futures[future]
+                try:
+                    payload = future.result()
+                    break
+                except Exception as exc:  # noqa: BLE001 - try other instances
+                    last_error = f"{type(exc).__name__}: {exc}"
+                    logger.warning("overpass instance failed (%s): %s", base, exc)
+        except TimeoutError:  # no instance answered within the window
+            last_error = "overpass timed out on all instances"
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+    if payload is None and not urls:
+        last_error = "no overpass instances configured"
+
+    if payload is None:
+        set_fact(
+            "places",
+            "overpass",
+            kind,
+            f"{lat:.3f}",
+            f"{lng:.3f}",
+            str(radius),
+            payload={"pois": [], "error": last_error},
+            ttl=600,  # short TTL; live layer retries soon
+        )
+        return [], last_error
+
+    pois: list[dict[str, Any]] = []
+    for element in payload.get("elements") or []:
+        tags = element.get("tags") or {}
+        name = str(tags.get("name") or "").strip()
+        center = element.get("center") or {}
+        p_lat = element.get("lat") if element.get("lat") is not None else center.get("lat")
+        p_lng = element.get("lon") if element.get("lon") is not None else center.get("lon")
+        if not name or p_lat is None or p_lng is None:
+            continue
+        address = " ".join(
+            part
+            for part in [
+                str(tags.get("addr:housenumber") or "").strip(),
+                str(tags.get("addr:street") or "").strip(),
+                str(tags.get("addr:suburb") or "").strip(),
+                str(tags.get("addr:city") or "").strip(),
+            ]
+            if part
+        )
+        pois.append(
+            {
+                "name": name,
+                "category": str(tags.get(tag_key) or "").strip(),
+                "cuisine": str(tags.get("cuisine") or "").strip(),
+                "phone": str(
+                    tags.get("phone") or tags.get("contact:phone") or ""
+                ).strip(),
+                "website": str(
+                    tags.get("website") or tags.get("contact:website") or ""
+                ).strip(),
+                "address": address,
+                "latitude": float(p_lat),
+                "longitude": float(p_lng),
+                "distance_km": _haversine_km(lat, lng, float(p_lat), float(p_lng)),
+            }
+        )
+
+    pois.sort(key=lambda p: p["distance_km"])
+    pois = pois[: settings.overpass_max_pois]
+    set_fact(
+        "places",
+        "overpass",
+        kind,
+        f"{lat:.3f}",
+        f"{lng:.3f}",
+        str(radius),
+        payload={"pois": pois, "error": None},
+    )
+    return pois, None
+
+
+def _anchor(
+    question: str,
+    entities: list[str],
+    temple_ids: list[str] | None,
+):
+    """Resolve a coordinate anchor for the live layer. Entity ids first (offline),
+    then the first user mention. Ambiguous mentions raise for clarification."""
+    candidates: list[Any] = []
+    if temple_ids:
+        candidates.append(temple_ids[0])
+    for mention in entities or []:
+        if mention and mention not in candidates:
+            candidates.append(mention)
+
+    for candidate in candidates[:3]:
+        try:
+            return resolve_place(candidate)
+        except TravelResolverClarificationError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - unresolvable -> static only
+            logger.info("accommodation anchor failed for %r: %s", candidate, exc)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# evidence builders
+# ---------------------------------------------------------------------------
+
+def _hotel_evidence(record: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "source": "hotel_dataset",
+        "kind": "hotel",
+        "source_tier": "internal_dataset",
+        "name": record["name"],
+        "hotel_type": record["hotel_type"],
+        "temple_id": record["temple_id"],
+        "temple_name": record["temple_name"],
+        "address": record["address"],
+        "price_range": record["price_range"],
+        "rating": record["rating"],
+        "rating_platform": record["rating_platform"],
+        "booking_links": record["booking_links"],
+        "amenities": record["amenities"],
+        "check_in": record["check_in"],
+        "check_out": record["check_out"],
+        "phones": record["phones"],
+        "map_link": record["map_link"],
+        "website": record["website"],
+        "about": record["about"],
+    }
+
+
+def _restaurant_evidence(record: dict[str, Any]) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "source": "restaurant_dataset",
+        "kind": "restaurant",
+        "source_tier": "internal_dataset",
+        "name": record["name"],
+        "temple_id": record["temple_id"],
+        "temple_name": record["temple_name"],
+        "city": record["city"],
+        "address": record["address"],
+        "cuisine": record["cuisine"],
+        "vegetarian": record["vegetarian"],
+        "pure_veg": record["pure_veg"],
+        "price_category": record["price_category"],
+        "average_cost_for_one": record["average_cost_for_one"],
+        "average_cost_for_two": record["average_cost_for_two"],
+        "rating": record["rating"],
+        "reviews": record["reviews"],
+        "hours": record["hours"],
+        "phone": record["phone"],
+        "maps_link": record["maps_link"],
+        "distance_km": record["distance_km"],
+        "open": record["open"],
+        "last_verified": record["last_verified"],
+        "dataset_status": record["dataset_status"],
+    }
+    return item
+
+
+def _osm_evidence(poi: dict[str, Any], source: str) -> dict[str, Any]:
+    return {
+        "source": source,
+        "kind": "poi",
+        "source_tier": "open-data",
+        "name": poi["name"],
+        "category": poi["category"],
+        "cuisine": poi["cuisine"],
+        "phone": poi["phone"],
+        "website": poi["website"],
+        "address": poi["address"],
+        "latitude": poi["latitude"],
+        "longitude": poi["longitude"],
+        "distance_km": poi["distance_km"],
+    }
+
+
+def _dedupe_against_static(osm_items: list[dict], static_names: list[str]) -> list[dict]:
+    kept: list[dict] = []
+    seen_names = [n.lower() for n in static_names]
+    for item in osm_items:
+        low = item["name"].lower()
+        if any(
+            SequenceMatcher(None, low, existing).ratio() > 0.72
+            for existing in seen_names
+        ):
+            continue
+        seen_names.append(low)
+        kept.append(item)
+    return kept
+
+
+# ---------------------------------------------------------------------------
+# agent entry point (registry contract)
+# ---------------------------------------------------------------------------
+
+def run(
+    *,
+    question: str = "",
+    entities: list[str] | None = None,
+    temple_ids: list[str] | None = None,
+    kind: str = "hotel",
+) -> dict:
+    entities = entities or []
+    noun = "hotels" if kind == "hotel" else "restaurants"
+
+    try:
+        records = _load_hotels() if kind == "hotel" else _load_restaurants()
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "status": "ERROR",
+            "error": f"accommodation dataset unavailable: {type(exc).__name__}: {exc}",
+            "evidence": [],
+        }
+
+    evidence: list[dict[str, Any]] = []
+
+    # --- live anchor (for OSM radius search) ---
+    try:
+        anchor = _anchor(question, entities, temple_ids)
+    except TravelResolverClarificationError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - never fail the whole agent
+        logger.info("accommodation anchor skipped: %s", exc)
+        anchor = None
+
+    if anchor is not None:
+        evidence.append(
+            {
+                "source": "place_resolution",
+                "kind": "place",
+                "role": "anchor",
+                "name": anchor.display_name,
+                "latitude": anchor.coordinates.latitude,
+                "longitude": anchor.coordinates.longitude,
+                "resolved_via": anchor.source,
+            }
+        )
+
+    # --- static curated layer ---
+    selected = _select_static(
+        records,
+        question=question,
+        entities=entities,
+        temple_ids=temple_ids,
+        kind=kind,
+    )[:MAX_STATIC]
+
+    if kind == "hotel":
+        evidence.extend(_hotel_evidence(r) for r in selected)
+    else:
+        evidence.extend(_restaurant_evidence(r) for r in selected)
+
+    # --- live OpenStreetMap layer ---
+    osm_error: str | None = None
+    if anchor is not None:
+        try:
+            pois, osm_error = _overpass_search(
+                kind,
+                anchor.coordinates.latitude,
+                anchor.coordinates.longitude,
+            )
+        except Exception as exc:  # noqa: BLE001
+            pois, osm_error = [], f"{type(exc).__name__}: {exc}"
+
+        static_names = [r["name"] for r in selected]
+        osm_items = _dedupe_against_static(
+            [_osm_evidence(p, "osm_search") for p in pois],
+            static_names,
+        )[:MAX_OSM]
+        evidence.extend(osm_items)
+
+        if osm_error:
+            evidence.append(
+                {
+                    "source": "osm_search",
+                    "kind": "note",
+                    "key": "osm_status",
+                    "error": "Live OpenStreetMap search is unavailable right now.",
+                    "hint": None,
+                }
+            )
+
+    # --- v15 (audit D06/D07): ONE hard-constraint gate AFTER every source
+    # is merged. Live OSM results have no dietary/price/AC verification —
+    # unknown must never satisfy a strict request (the earlier static-only
+    # filter let a mocked unknown-diet restaurant through). ---
+    evidence, constraint_drops = _enforce_post_merge_constraints(
+        evidence, question, kind
+    )
+    # Ground the user's OWN constraint values in evidence so echoing them
+    # back ("under ₹200 within 2 km") validates instead of degrading.
+    applied: list[str] = []
+    q_lower = (question or "").lower()
+    if kind == "restaurant":
+        if any(
+            phrase in q_lower
+            for phrase in ("pure veg", "pure vegetarian", "pureveg", "pure-veg", "jain")
+        ):
+            applied.append("strict pure-veg only (unverified diet excluded)")
+        elif _tokens(question) & {"veg", "vegetarian"}:
+            applied.append("vegetarian only")
+    radius = _within_km(question)
+    if radius is not None and kind in {"restaurant", "hotel"}:
+        applied.append(f"radius ≤ {radius:g} km")
+    price = _max_price_rupees(question)
+    if price is not None:
+        scope = "per person" if kind == "restaurant" and "per person" in q_lower else ""
+        applied.append(f"budget ≤ ₹{price:g} {'(each) per person' if scope else ''}".strip())
+    if kind == "hotel" and _wants_ac(question):
+        applied.append("AC required")
+    if applied:
+        evidence.append(
+            {
+                "source": "accommodation",
+                "kind": "note",
+                "key": "constraints_applied",
+                "error": "Applied your filters: " + "; ".join(applied) + ".",
+                "hint": None,
+            }
+        )
+    if constraint_drops:
+        parts = [
+            f"{count} result(s) excluded — {reason}"
+            for reason, count in sorted(constraint_drops.items())
+            if count
+        ]
+        evidence.append(
+            {
+                "source": "accommodation",
+                "kind": "note",
+                "key": "constraint_exclusions",
+                "error": (
+                    "Applied your hard requirements; " + "; ".join(parts)
+                    + ". Unknown status does not count as a match."
+                ),
+                "hint": None,
+            }
+        )
+    if kind == "hotel" and selected and _wants_occupancy(question):
+        evidence.append(
+            {
+                "source": "accommodation",
+                "kind": "note",
+                "key": "occupancy_unverified",
+                "error": (
+                    "Verified hotel records do not include room capacity / "
+                    "occupancy, so traveller-count requirements could not "
+                    "be confirmed for these hotels."
+                ),
+                "hint": None,
+            }
+        )
+
+    # radius constraint on hotels: dataset has no per-hotel distance, so we
+    # must NOT pretend the radius was enforced (audit D07 honesty rule)
+    if (
+        kind == "hotel"
+        and selected
+        and _within_km(question) is not None
+    ):
+        evidence.append(
+            {
+                "source": "accommodation",
+                "kind": "note",
+                "key": "radius_unverified",
+                "error": (
+                    "Verified hotel records do not store exact distances "
+                    "from the temple, so the requested radius could not be "
+                    "confirmed for these hotels."
+                ),
+                "hint": None,
+            }
+        )
+
+    # --- honest no-data note ---
+    has_results = any(
+        item.get("kind") in {"hotel", "restaurant", "poi"} for item in evidence
+    )
+    if not has_results:
+        template = (
+            settings.hotel_search_link if kind == "hotel" else settings.food_search_link
+        )
+        try:
+            query_text = (question or noun).strip() or noun
+            hint = template.format(query=urllib.parse.quote_plus(query_text))
+        except Exception:  # noqa: BLE001 - never fail on a template
+            hint = None
+        evidence.append(
+            {
+                "source": "accommodation" if kind == "hotel" else "restaurant",
+                "kind": "note",
+                "key": "no_data",
+                "error": (
+                    f"No {noun} found in the curated dataset or the live map "
+                    "for this query."
+                ),
+                "hint": hint,
+            }
+        )
+
+    return {"status": "COMPLETED", "evidence": evidence}

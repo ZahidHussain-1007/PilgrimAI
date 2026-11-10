@@ -1,0 +1,273 @@
+/* v22 regression updated for v23 automatic policy; response is HELD, not fabricated, for the main live test. */
+import fs from "node:fs/promises";
+const { chromium } = await import(
+  process.env.PLAYWRIGHT_IMPORT || "playwright"
+);
+const browser = await chromium.launch({ headless: true });
+const context = await browser.newContext({
+  viewport: { width: 1568, height: 882 },
+  timezoneId: "America/Los_Angeles",
+});
+const page = await context.newPage();
+const results = [],
+  errors = [];
+const base = process.env.PILGRIM_BASE_URL || "http://127.0.0.1:3100";
+const check = (name, pass, details = "") => {
+  results.push({ name, pass: !!pass, details });
+  console.log(`${pass ? "PASS" : "FAIL"} ${name} ${details}`);
+  if (!pass) throw new Error(name);
+};
+page.on("pageerror", (e) => errors.push(e.message));
+await fs.mkdir("shots", { recursive: true });
+const request = {
+  temple_ids: ["T0001"],
+  primary_temple_id: "T0001",
+  timezone: "Asia/Kolkata",
+  stay_mode: "daily_return",
+  hotel_id: null,
+  avoid_climbing: false,
+  daily_travel_limit_minutes: null,
+  traffic_buffer_percent: 15,
+  parking_buffer_minutes: 10,
+  meal_minutes: 60,
+  origin: "Uppal, Hyderabad",
+  start_date: "2026-11-04",
+  days: 2,
+  departure: "07:00",
+  finish: "21:00",
+  budget_cap: null,
+  adults: 3,
+  children: 0,
+  elderly: 0,
+  transport: "car",
+  stay: "none",
+  food: "veg",
+  special: "none",
+  budget_tier: "mid",
+  rooms: 1,
+  visit_minutes: 75,
+  rest_minutes: 15,
+  priorities: ["darshan"],
+  include_attractions: true,
+  language: "en",
+  allow_estimates: false,
+};
+async function form(r, lang = "en") {
+  await page.goto(base + "/plan");
+  await page.evaluate(
+    ({ r, lang }) => {
+      sessionStorage.setItem("pilgrim:planning:edit", JSON.stringify(r));
+      localStorage.setItem("pilgrim:language", lang);
+    },
+    { r, lang },
+  );
+  await page.reload();
+  await page.locator("input[type=date]").waitFor({ timeout: 45000 });
+}
+let release, held, created, heldResolve;
+const heldReady = new Promise((r) => {
+  heldResolve = r;
+});
+const gate = new Promise((r) => {
+  release = r;
+});
+let posts = 0;
+try {
+  await form(request);
+  await page.route("**/api/planning/jobs", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    posts++;
+    held = true;
+    heldResolve();
+    await gate;
+    await route.continue();
+  });
+  const response = page
+    .waitForResponse(
+      (r) =>
+        r.url() === base + "/api/planning/jobs" &&
+        r.request().method() === "POST",
+    )
+    .catch(() => null);
+  const start = Date.now();
+  await page.getByRole("button", { name: "Plan My Trip", exact: true }).click();
+  await page.locator("[data-planning-experience]").waitFor({ timeout: 1500 });
+  check(
+    "Click shows full-viewport waiting experience before POST response",
+    !created,
+    `visible after ${Date.now() - start}ms`,
+  );
+  await page.waitForURL("**/planning/submit-*", { timeout: 45000 });
+  await heldReady;
+  check(
+    "Dedicated waiting URL precedes job acceptance",
+    page.url().includes("/planning/submit-") && held && !created,
+  );
+  check(
+    "No sidebar/auth shell on waiting route",
+    (await page.locator(".sidebar").count()) === 0,
+  );
+  const rect = await page
+    .locator("[data-planning-experience] [data-engine]")
+    .boundingBox();
+  check(
+    "Video frame fills 1568x882 viewport",
+    rect?.x === 0 &&
+      rect?.y === 0 &&
+      rect?.width === 1568 &&
+      rect?.height === 882,
+    JSON.stringify(rect),
+  );
+  await page.locator("[data-playback=playing]").waitFor({ timeout: 20000 });
+  check("Selected-temple video actually plays while POST is held", true);
+  await page.screenshot({ path: "shots/p5-v22-before-response.png" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobile = await page
+    .locator("[data-planning-experience] [data-engine]")
+    .boundingBox();
+  check(
+    "Mobile video fills viewport without document overflow",
+    mobile?.width === 390 &&
+      mobile?.height === 844 &&
+      (await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      )),
+  );
+  await page.screenshot({ path: "shots/p5-v22-mobile-waiting.png" });
+  await page.setViewportSize({ width: 1568, height: 882 });
+  release();
+  created = await (await response).json();
+  check(
+    "One real job POST, no StrictMode duplicate",
+    posts === 1 && !!created.id,
+  );
+  await page.waitForURL("**/itinerary/" + created.id, { timeout: 120000 });
+  await page.locator("[data-itinerary-workspace]").waitFor();
+  const saved = await (
+    await page.request.get(base + "/api/planning/jobs/" + created.id)
+  ).json();
+  check(
+    "Only actual terminal result opens final itinerary",
+    !!saved.result && ["completed", "needs_changes"].includes(saved.status),
+  );
+  check(
+    "Both original dates and zero return-mode stay charge remain intact",
+    saved.result.days.length === 2 &&
+      saved.result.days[0].date === "2026-11-04" &&
+      saved.result.days[1].date === "2026-11-05" &&
+      saved.result.budget.items
+        .filter((x) => x.category === "stay")
+        .every((x) => x.quantity === 0),
+  );
+  await page.unroute("**/api/planning/jobs");
+  // A one-day restored request can no longer create contradictory overnight input.
+  await form({
+    ...request,
+    temple_ids: ["T0009"],
+    primary_temple_id: "T0009",
+    days: 1,
+    stay: "hotel",
+    stay_mode: "overnight",
+  });
+  let repaired;
+  await page.route("**/api/planning/jobs", async (route) => {
+    if (route.request().method() === "POST") {
+      repaired = route.request().postDataJSON();
+      return route.fulfill({
+        status: 422,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "validationFailure" }),
+      });
+    }
+    return route.continue();
+  });
+  await page.getByRole("button", { name: "Plan My Trip", exact: true }).click();
+  await page.locator("[data-planning-page] [role=alert]").waitFor();
+  check(
+    "One-day form infers return mode instead of sending contradictory overnight policy",
+    repaired.days === 1 && repaired.stay_mode === "daily_return",
+  );
+  await page.screenshot({ path: "shots/p5-v22-overnight-correction.png" });
+  await page
+    .getByRole("button", {
+      name: "Edit request — keep my choices",
+      exact: true,
+    })
+    .click();
+  await page.locator("input[type=date]").waitFor();
+  check(
+    "Server correction restores original date/origin/accommodation/composition and selected temple",
+    (await page.locator("input[type=date]").inputValue()) === "2026-11-04" &&
+      (await page.getByLabel(/Starting city/).inputValue()) ===
+        "Uppal, Hyderabad" &&
+      (await page.getByLabel(/Accommodation/).inputValue()) === "hotel" &&
+      (await page.getByLabel("Adults", { exact: true }).inputValue()) === "3" &&
+      (await page.evaluate(() =>
+        document.body.textContent.includes("Birla Mandir"),
+      )),
+  );
+  await page.screenshot({ path: "shots/p5-v22-preserved-form.png" });
+  for (const lang of ["te", "hi"]) {
+    await form({ ...request, days: 1, stay: "hotel" }, lang);
+    await page.locator("button[type=submit]").click();
+    await page.locator("[data-planning-page] [role=alert]").waitFor();
+    check(
+      lang + " server correction uses localized UI (explicit 422 fixture)",
+      !(
+        await page.locator("[data-planning-page] [role=alert]").innerText()
+      ).includes("Your request needs attention"),
+    );
+  }
+  await page.unroute("**/api/planning/jobs");
+  await form(request);
+  await page.route("**/api/planning/jobs", async (route) => {
+    if (route.request().method() === "POST")
+      return route.fulfill({
+        status: 422,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "validationFailure" }),
+      });
+    return route.continue();
+  });
+  await page.locator("button[type=submit]").click();
+  await page.locator("[data-planning-page] [role=alert]").waitFor();
+  check(
+    "Server 422 stays on video page with safe correction (explicit failure fixture)",
+    page.url().includes("/planning/") &&
+      (await page
+        .locator("[data-planning-page] [role=alert]")
+        .innerText()
+        .then(
+          (t) =>
+            t.includes("invalid or contradictory") &&
+            !t.includes("value_error"),
+        )),
+  );
+  await page.unroute("**/api/planning/jobs");
+  await page.goto(base + "/planning/submit-missing");
+  await page.locator("[data-planning-page] [role=alert]").waitFor();
+  check(
+    "Missing/expired pending record offers recovery, no fabricated job",
+    await page
+      .locator("[data-planning-page] [role=alert]")
+      .innerText()
+      .then((t) => t.includes("missing or expired")),
+  );
+  check(
+    "No runtime or hydration errors",
+    errors.length === 0,
+    JSON.stringify(errors),
+  );
+} catch (e) {
+  release?.();
+  results.push({ name: "Unexpected failure", pass: false, details: String(e) });
+  console.error(e);
+  await page.screenshot({ path: "shots/p5-v22-failure.png" }).catch(() => {});
+  process.exitCode = 1;
+} finally {
+  await fs.writeFile(
+    "shots/p5-v22-results.json",
+    JSON.stringify({ results, errors }, null, 2),
+  );
+  await browser.close();
+}

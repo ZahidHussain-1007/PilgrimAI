@@ -1,0 +1,238 @@
+{
+  "base_commit": "3d3b3327d8599e72444388baf6053b385bcca59e",
+  "branch": "feat/v20-real-itinerary",
+  "local_test_date": "2026-11-02",
+  "node_version": "22.23.4",
+  "gates": {
+    "typescript": "PASS",
+    "vitest": {
+      "passed": 135,
+      "files": 22
+    },
+    "pytest": {
+      "passed": 222,
+      "skipped": 2,
+      "skip_reason": "Redis integration tests require configured Redis"
+    },
+    "production_build": "PASS (Next 16.3.8, webpack)",
+    "browser": {
+      "viewport": [
+        1568,
+        882
+      ],
+      "mobile_viewport": [
+        390,
+        844
+      ],
+      "passed": 23,
+      "failed": 0,
+      "mocked_planning_api": false,
+      "actual_youtube_playing_state": true,
+      "checks": [
+        {
+          "name": "Discovery asks for origin instead of assuming Hyderabad",
+          "pass": true,
+          "details": ""
+        },
+        {
+          "name": "Discovery uses explicit user origin and shared road capability",
+          "pass": true,
+          "details": "[{\"name\":\"Sri Rudreshwara Swamy Temple\",\"km\":8.77,\"minutes\":9},{\"name\":\"Ramappa Temple\",\"km\":69.63,\"minutes\":59},{\"name\":\"Surendrapuri — Kunda Satyanarayana Kaladhamam\",\"km\":100.69,\"minutes\":80},{\"name\":\"Sri Mallikarjuna Swamy Temple, Komuravelli\",\"km\":108.52,\"minutes\":87}]"
+        },
+        {
+          "name": "Both Continue controls share the selected temples",
+          "pass": true,
+          "details": ""
+        },
+        {
+          "name": "Form has explicit origin and native calendar date picker",
+          "pass": true,
+          "details": ""
+        },
+        {
+          "name": "Plan My Trip creates an actual owned backend job",
+          "pass": true,
+          "details": "6f40d095-476f-465d-b246-1ddcdeabd192"
+        },
+        {
+          "name": "Real result persisted with two mandatory visits, routes and evidence",
+          "pass": true,
+          "details": "status=completed; waiting observed=true"
+        },
+        {
+          "name": "Calendar exports actual events with IST-to-UTC instants",
+          "pass": true,
+          "details": ""
+        },
+        {
+          "name": "Nearby attractions link to Google Maps",
+          "pass": true,
+          "details": ""
+        },
+        {
+          "name": "Reload resumes the same server-saved itinerary",
+          "pass": true,
+          "details": ""
+        },
+        {
+          "name": "Itinerary chat composes multiple saved capabilities without invented facts",
+          "pass": true,
+          "details": ""
+        },
+        {
+          "name": "Revision preview does not mutate the saved original",
+          "pass": true,
+          "details": ""
+        },
+        {
+          "name": "Confirmed revision has a new ID/version and preserves original",
+          "pass": true,
+          "details": ""
+        },
+        {
+          "name": "Bus and hotel searches are real platform links",
+          "pass": true,
+          "details": ""
+        },
+        {
+          "name": "Bus timetable and incomplete budget are visibly unverified",
+          "pass": true,
+          "details": ""
+        },
+        {
+          "name": "Telugu switches new itinerary interface strings",
+          "pass": true,
+          "details": ""
+        },
+        {
+          "name": "Hindi switches new itinerary interface strings",
+          "pass": true,
+          "details": ""
+        },
+        {
+          "name": "Saved-draft index includes independently saved original/revision",
+          "pass": true,
+          "details": ""
+        },
+        {
+          "name": "Another anonymous browser cannot access this itinerary",
+          "pass": true,
+          "details": ""
+        },
+        {
+          "name": "Genuine running job shows large selected-temple video experience",
+          "pass": true,
+          "details": ""
+        },
+        {
+          "name": "Selected-temple video actually enters the playing state",
+          "pass": true,
+          "details": ""
+        },
+        {
+          "name": "Cancellation control persists a genuine terminal job state",
+          "pass": true,
+          "details": ""
+        },
+        {
+          "name": "Mobile itinerary has no horizontal document overflow",
+          "pass": true,
+          "details": ""
+        },
+        {
+          "name": "No page runtime/hydration errors",
+          "pass": true,
+          "details": "[]"
+        }
+      ]
+    }
+  },
+  "protected_files": [
+    {
+      "path": "multiagent/app/api/chat.py",
+      "base_sha256": "c033b38c484b0f257c89089213f4c5ed36452ba66b30157e02bcaa5308b63b26",
+      "working_sha256": "c033b38c484b0f257c89089213f4c5ed36452ba66b30157e02bcaa5308b63b26",
+      "unchanged": true
+    },
+    {
+      "path": "multiagent/app/core/config.py",
+      "base_sha256": "74fdffb33ff413932ce5ebedd9c158cb5dc7c50169119ce98fdddf6de66b5f64",
+      "working_sha256": "74fdffb33ff413932ce5ebedd9c158cb5dc7c50169119ce98fdddf6de66b5f64",
+      "unchanged": true
+    },
+    {
+      "path": "multiagent/app/models/query.py",
+      "base_sha256": "4f079be7dec78dca209a3dd77e6ca589e92d269d16904c1336d6515d64b75197",
+      "working_sha256": "4f079be7dec78dca209a3dd77e6ca589e92d269d16904c1336d6515d64b75197",
+      "unchanged": true
+    },
+    {
+      "path": "multiagent/app/pipeline/compose.py",
+      "base_sha256": "f62c1667440963444804f0748d985d89bf95c7703563895752264bb62bb5120b",
+      "working_sha256": "f62c1667440963444804f0748d985d89bf95c7703563895752264bb62bb5120b",
+      "unchanged": true
+    },
+    {
+      "path": "multiagent/app/services/llm.py",
+      "base_sha256": "932c0c645acff67a9266e44fc1b752141891fc0cfdf5163569ff47466ea3e2af",
+      "working_sha256": "932c0c645acff67a9266e44fc1b752141891fc0cfdf5163569ff47466ea3e2af",
+      "unchanged": true
+    }
+  ],
+  "original_checkout_clean": true,
+  "video_oembed_observations": [
+    {
+      "temple_id": "T0014",
+      "video_id": "YflzmixmTKc",
+      "http_status": 200,
+      "title": "Ramappa-T0014"
+    },
+    {
+      "temple_id": "T0015",
+      "video_id": "uaGrubVDiio",
+      "http_status": 200,
+      "title": "November 2, 2026"
+    },
+    {
+      "temple_id": "T0023",
+      "video_id": "g4kMf4h_7xE",
+      "http_status": 200,
+      "title": "Swarnagiri-T0023"
+    },
+    {
+      "temple_id": "T0021",
+      "video_id": "AqvP36HH0eY",
+      "http_status": 200,
+      "title": "Medaram-T0021"
+    },
+    {
+      "temple_id": "T0022",
+      "video_id": "cNrOLnMw7mA",
+      "http_status": 200,
+      "title": "Surendrapuri-T0022"
+    },
+    {
+      "temple_id": "T0019",
+      "video_id": "aNInk-5uK38",
+      "http_status": 200,
+      "title": "Manyamkonda-T0019"
+    }
+  ],
+  "not_certified": [
+    "Live fares, seats, hotel availability, accessibility and date-specific temple operations",
+    "Global optimizer optimality or proof of infeasibility",
+    "Hotel-based multi-city routing and timed attraction insertion",
+    "Distributed queue / cloud itinerary persistence",
+    "Authenticated live Supabase flows and live LLM-provider credentials",
+    "Provider-free YouTube UI or forced highest quality"
+  ],
+  "evidence_files": [
+    "shots/p5-v20-results.json",
+    "shots/p5-v20-inputs.png",
+    "shots/p5-v20-waiting.png",
+    "shots/p5-v20-itinerary.png",
+    "shots/p5-v20-revision.png",
+    "shots/p5-v20-mobile.png",
+    "shots/p5-v20-calendar.ics"
+  ]
+}
