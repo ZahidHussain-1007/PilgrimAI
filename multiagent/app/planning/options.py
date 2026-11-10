@@ -71,17 +71,60 @@ def restaurant_windows(raw, req):
 
 
 def _coords(raw):
+    """Verified coordinates only, filtered by the catalogue service area.
+
+    v23.2: the box now comes from configuration instead of literals, and the
+    extra `lat`/`lng` spellings are accepted so enriched records are picked
+    up without inventing anything. A record without coordinates still
+    returns (None, None) - unknown stays unknown.
+    """
+    from app.core.config import settings
+
     loc = raw.get("location") or {}
-    lat = loc.get("latitude", raw.get("latitude"))
-    lng = loc.get("longitude", raw.get("longitude"))
-    if (
-        isinstance(lat, (int, float))
-        and isinstance(lng, (int, float))
-        and 15.6 <= lat <= 20.3
-        and 76.6 <= lng <= 81.5
-    ):
+    lat = loc.get("latitude", raw.get("latitude", raw.get("lat")))
+    lng = loc.get("longitude", raw.get("longitude", raw.get("lng")))
+    if not isinstance(lat, (int, float)) or not isinstance(lng, (int, float)):
+        return None, None
+    if isinstance(lat, bool) or isinstance(lng, bool):
+        return None, None
+    try:
+        min_lat, min_lon, max_lat, max_lon = (
+            float(part) for part in settings.geo_scope_bbox.split(",")
+        )
+    except (AttributeError, TypeError, ValueError):
+        return lat, lng
+    if min_lat <= lat <= max_lat and min_lon <= lng <= max_lon:
         return lat, lng
     return None, None
+
+
+def _capacity(raw):
+    """Room capacity, only when the record actually publishes it."""
+    for key in ("max_adults_per_room", "room_capacity", "capacity_per_room"):
+        value = raw.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            return value
+    return None
+
+
+def _capacity_reason(capacity, people, rooms, category_match):
+    """Human-readable reason a hotel did or did not meet the requirement."""
+    if not category_match:
+        return "The property type does not match the selected stay preference."
+    if capacity is None:
+        return (
+            "Room capacity is not published in this verified record, so a "
+            f"{people}-guest requirement cannot be confirmed."
+        )
+    if capacity * rooms < people:
+        return (
+            f"Published capacity is {capacity} guest(s) per room; "
+            f"{rooms} room(s) is not enough for {people} guest(s)."
+        )
+    return (
+        f"Published capacity is {capacity} guest(s) per room, which covers "
+        f"{people} guest(s) in {rooms} room(s)."
+    )
 
 
 def retrieve(req, places) -> StayFoodEvidence:
@@ -97,8 +140,7 @@ def retrieve(req, places) -> StayFoodEvidence:
             # Show discovered options even when capacity can't be proven.
             if req.stay == "none":
                 continue
-            capacity = raw.get("max_adults_per_room") or raw.get("room_capacity")
-            capacity = capacity if isinstance(capacity, int) and capacity > 0 else None
+            capacity = _capacity(raw)
             extra = raw.get("extra_bed_available")
             lat, lng = _coords(raw)
             price = budget._parse_price_range(raw.get("price_range"))
@@ -138,6 +180,16 @@ def retrieve(req, places) -> StayFoodEvidence:
                 else "capacity_unknown"
                 if capacity is None
                 else "does_not_match",
+                # v23.2: a name in the dataset is discovery, never
+                # verification. Each requirement is reported separately so
+                # the UI can say exactly what is and is not confirmed.
+                "match_reason": _capacity_reason(
+                    capacity, people, req.rooms, category_match
+                ),
+                "capacity_verified": capacity is not None,
+                "coordinates_verified": lat is not None,
+                "timing_verified": time_clock(norm["check_in"]) is not None
+                and time_clock(norm["check_out"]) is not None,
                 "availability": "unverified",
                 "booking_status": "not_booked",
                 "verification": "catalog_not_live",
@@ -215,6 +267,8 @@ def retrieve(req, places) -> StayFoodEvidence:
         )
     )
     if req.stay_mode == "overnight":
+        # Verified selection: capacity + coordinates + check-in/out all
+        # evidenced by the record itself.
         eligible = [
             h
             for h in result["hotels"]
@@ -227,7 +281,38 @@ def retrieve(req, places) -> StayFoodEvidence:
             eligible = [h for h in eligible if h["id"] == req.hotel_id]
         if eligible:
             result["selected_hotel"] = eligible[0]
+            result["hotel_status"] = "verified_match"
         else:
+            # Nothing verified. Report *why* instead of a bare flag, and keep
+            # the discovered properties as clearly-unverified options.
+            missing = {
+                "capacity": sum(1 for h in result["hotels"] if not h["capacity_verified"]),
+                "coordinates": sum(1 for h in result["hotels"] if not h["coordinates_verified"]),
+                "timing": sum(1 for h in result["hotels"] if not h["timing_verified"]),
+            }
+            if not result["hotels"]:
+                reason = "No accommodation is catalogued for the selected temples."
+            else:
+                parts = [
+                    f"{count} without published room capacity"
+                    for key, count in missing.items()
+                    if key == "capacity" and count
+                ] + [
+                    f"{count} without coordinates"
+                    for key, count in missing.items()
+                    if key == "coordinates" and count
+                ] + [
+                    f"{count} without check-in/out times"
+                    for key, count in missing.items()
+                    if key == "timing" and count
+                ]
+                reason = (
+                    f"{len(result['hotels'])} propert"
+                    f"{'y' if len(result['hotels']) == 1 else 'ies'} discovered, "
+                    "none verifiable for this stay: " + "; ".join(parts) + "."
+                )
+            result["hotel_status"] = "unverified_options_only"
+            result["hotel_unverified_reason"] = reason
             result["notes"].append("hotel_requirements_unverified")
     elif req.stay != "none":
         result["notes"].append("hotel_not_needed_daily_return")
