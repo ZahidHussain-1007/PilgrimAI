@@ -1,0 +1,421 @@
+{
+  "policy": "Conservative normalization of repository catalog prose, not live or certified operational availability. Source digest mismatch fails closed. All clocks IST. Public holidays/festivals need direct confirmation.",
+  "temples": {
+    "T0001": {
+      "source": "multiagent/data/temples/T0001.json#darshan_timings",
+      "source_sha256": "b84b9509458f520b28f264838bda7a4367da048580ac49580daadabdb031dd36",
+      "note": "Conservative explicit daily hours from the catalog; special services and festival extensions excluded.",
+      "weekday_windows": {},
+      "windows": [
+        [
+          420,
+          540
+        ],
+        [
+          600,
+          705
+        ],
+        [
+          750,
+          900
+        ],
+        [
+          1020,
+          1140
+        ],
+        [
+          1215,
+          1260
+        ]
+      ]
+    },
+    "T0002": {
+      "source": "multiagent/data/temples/T0002.json#darshan_timings",
+      "source_sha256": "9dd9c4144edbc553a1a2437081626103f811e2ca94879968f24acf6549608e6e",
+      "note": "Daily detailed Sarva Darshan; Sunday prose alone does not establish a continuous opening window.",
+      "weekday_windows": {},
+      "windows": [
+        [
+          300,
+          720
+        ],
+        [
+          900,
+          1080
+        ],
+        [
+          1110,
+          1260
+        ]
+      ]
+    },
+    "T0003": {
+      "source": "multiagent/data/temples/T0003.json#darshan_timings",
+      "source_sha256": "a351c25c20d83f8f3a966ef526487c49f78c169fe70c5d230b017dbf96f3b68f",
+      "note": "Only explicit darshan clauses; ambiguous 5:55/6:00 PM rounded to earlier close 5:55 PM.",
+      "weekday_windows": {},
+      "windows": [
+        [
+          275,
+          300
+        ],
+        [
+          375,
+          690
+        ],
+        [
+          730,
+          840
+        ],
+        [
+          870,
+          1075
+        ]
+      ]
+    },
+    "T0004": {
+      "source": "multiagent/data/temples/T0004.json#darshan_timings",
+      "source_sha256": "6ea93ec6984133f887007cfa2c2f1af08c18b9f3d63c013e1fd1bc8ab22be5c5",
+      "note": "Conservative explicit daily hours from the catalog; special services and festival extensions excluded.",
+      "weekday_windows": {},
+      "windows": [
+        [
+          450,
+          720
+        ],
+        [
+          840,
+          1080
+        ],
+        [
+          1140,
+          1230
+        ]
+      ]
+    },
+    "T0005": {
+      "source": "multiagent/data/temples/T0005.json#darshan_timings",
+      "source_sha256": "2d5971384f918c95625870051883e9d647672fb2d1cfc1cecd447cbfe7dfcba8",
+      "note": "Weekday-specific rows supersede general row.",
+      "weekday_windows": {
+        "1": [
+          [
+            360,
+            990
+          ],
+          [
+            1080,
+            1200
+          ]
+        ],
+        "5": [
+          [
+            360,
+            990
+          ],
+          [
+            1080,
+            1200
+          ]
+        ],
+        "6": [
+          [
+            360,
+            990
+          ],
+          [
+            1080,
+            1200
+          ]
+        ]
+      },
+      "windows": [
+        [
+          360,
+          810
+        ],
+        [
+          900,
+          990
+        ],
+        [
+          1080,
+          1200
+        ]
+      ]
+    },
+    "T0006": {
+      "source": "multiagent/data/temples/T0006.json#darshan_timings",
+      "source_sha256": "0df9cb4291aa725a772d91b5816b095cd4aff7aef61d065cdc34939341577731",
+      "note": "Morning uses later 7 AM start mentioned in the same primary row; 24-hour conflicting listing excluded.",
+      "weekday_windows": {},
+      "windows": [
+        [
+          420,
+          780
+        ],
+        [
+          840,
+          1230
+        ]
+      ]
+    },
+    "T0007": {
+      "source": "multiagent/data/temples/T0007.json#darshan_timings",
+      "source_sha256": "fbdf755c251b81ba5c98cc471fb0640af2fedebd28f45d416d44e209e3fd7d4e",
+      "note": "Conservative explicit daily hours from the catalog; special services and festival extensions excluded.",
+      "weekday_windows": {},
+      "windows": [
+        [
+          240,
+          780
+        ],
+        [
+          900,
+          1230
+        ]
+      ]
+    },
+    "T0008": {
+      "source": "multiagent/data/temples/T0008.json#darshan_timings",
+      "source_sha256": "823bd51480160e60f5b4565ee7e35fc39d4da338f5ba24a4a8ed9afff1370f32",
+      "note": "Subtract the alternate catalog cleaning closure 3–3:30 PM conservatively.",
+      "weekday_windows": {},
+      "windows": [
+        [
+          300,
+          900
+        ],
+        [
+          930,
+          1200
+        ]
+      ]
+    },
+    "T0009": {
+      "source": "multiagent/data/temples/T0009.json#darshan_timings",
+      "source_sha256": "19e32ed0dce72306aaace3b4124d1af5c616495ce63978c68f6aad1b7c226f3f",
+      "note": "Conservative explicit daily hours from the catalog; special services and festival extensions excluded.",
+      "weekday_windows": {},
+      "windows": [
+        [
+          420,
+          720
+        ],
+        [
+          900,
+          1260
+        ]
+      ]
+    },
+    "T0010": {
+      "source": "multiagent/data/temples/T0010.json#darshan_timings",
+      "source_sha256": "185c25040876b23019fd03e2bbe13e51bab49a4ea373740fb8721b97bb6aa3ea",
+      "note": "Conservative explicit daily hours from the catalog; special services and festival extensions excluded.",
+      "weekday_windows": {
+        "6": [
+          [
+            480,
+            1200
+          ]
+        ]
+      },
+      "windows": [
+        [
+          480,
+          780
+        ],
+        [
+          960,
+          1200
+        ]
+      ]
+    },
+    "T0011": {
+      "source": "multiagent/data/temples/T0011.json#darshan_timings",
+      "source_sha256": "0e47d857be32fa8aa8ec4e5886852ea5a46b5a9b4e42068eacfc736d977cc306",
+      "note": "Conservative explicit daily hours from the catalog; special services and festival extensions excluded.",
+      "weekday_windows": {},
+      "windows": [
+        [
+          360,
+          765
+        ],
+        [
+          900,
+          1170
+        ]
+      ]
+    },
+    "T0012": {
+      "source": "multiagent/data/temples/T0012.json#darshan_timings",
+      "source_sha256": "afad1ee401a7ab3ae5e2e352c5d55231f73b5e7d590d948916217e7da4bbd0fd",
+      "note": "Granular Sarva Darshan slots, not ritual/open-door hours.",
+      "weekday_windows": {},
+      "windows": [
+        [
+          450,
+          720
+        ],
+        [
+          900,
+          1140
+        ]
+      ]
+    },
+    "T0013": {
+      "source": "multiagent/data/temples/T0013.json#darshan_timings",
+      "source_sha256": "6acf4c2890e3516a08613ba0e129cbd47e835657713a0b450d3ede90ae945783",
+      "note": "Conservative explicit daily hours from the catalog; special services and festival extensions excluded.",
+      "weekday_windows": {},
+      "windows": [
+        [
+          360,
+          1200
+        ]
+      ]
+    },
+    "T0014": {
+      "source": "multiagent/data/temples/T0014.json#darshan_timings",
+      "source_sha256": "5ba9a6141add0de4a0d81ad495ca2d542bb541702ac19c4c960945c4929323ae",
+      "note": "Conservative explicit daily hours from the catalog; special services and festival extensions excluded.",
+      "weekday_windows": {},
+      "windows": [
+        [
+          360,
+          1080
+        ]
+      ]
+    },
+    "T0015": {
+      "source": "multiagent/data/temples/T0015.json#darshan_timings",
+      "source_sha256": "797e56d1ebe3f9cab15b0e10ba99c46ddf88ff0b66bee4a1780d1d78450c123c",
+      "note": "Conservative explicit daily hours from the catalog; special services and festival extensions excluded.",
+      "weekday_windows": {},
+      "windows": [
+        [
+          360,
+          720
+        ],
+        [
+          900,
+          1140
+        ]
+      ]
+    },
+    "T0016": {
+      "source": "multiagent/data/temples/T0016.json#darshan_timings",
+      "source_sha256": "425f804d204a78489caa83fad14eff4ddab8132dc543064f77ddcdf7b6680657",
+      "note": "Conservative explicit daily hours from the catalog; special services and festival extensions excluded.",
+      "weekday_windows": {
+        "6": [
+          [
+            300,
+            1140
+          ]
+        ]
+      },
+      "windows": [
+        [
+          330,
+          1110
+        ]
+      ]
+    },
+    "T0017": {
+      "source": "multiagent/data/temples/T0017.json#darshan_timings",
+      "source_sha256": "e53d6d7b6793e88f6747e2aadb59b9a52de83b041f47c80596b22c8c6dfc6aa6",
+      "note": "Use earlier 2 PM break from the conflicting catalog rows, reopen 4 PM.",
+      "weekday_windows": {},
+      "windows": [
+        [
+          330,
+          840
+        ],
+        [
+          960,
+          1200
+        ]
+      ]
+    },
+    "T0018": {
+      "source": "multiagent/data/temples/T0018.json#darshan_timings",
+      "source_sha256": "2d3e013cef742b93a0c98bda6bd233f11efb9e253aed04785433e061a0f41556",
+      "note": "Conservative overlap of the catalog daily variants: 6 AM–noon, 4–7:30 PM.",
+      "weekday_windows": {},
+      "windows": [
+        [
+          360,
+          720
+        ],
+        [
+          960,
+          1170
+        ]
+      ]
+    },
+    "T0019": {
+      "source": "multiagent/data/temples/T0019.json#darshan_timings",
+      "source_sha256": "220141c1da2cfcc72568f9d1daf42658beab9de3420164ad6e9ee89456a354b0",
+      "note": "Conservative explicit daily hours from the catalog; special services and festival extensions excluded.",
+      "weekday_windows": {},
+      "windows": [
+        [
+          390,
+          750
+        ],
+        [
+          900,
+          1230
+        ]
+      ]
+    },
+    "T0020": {
+      "source": "multiagent/data/temples/T0020.json#darshan_timings",
+      "source_sha256": "5753642eeedb60990d3e440dcf2b76f86f17bc9b6e1bd14482233ea3861a274f",
+      "note": "Conservative explicit daily hours from the catalog; special services and festival extensions excluded.",
+      "weekday_windows": {},
+      "windows": [
+        [
+          420,
+          1230
+        ]
+      ]
+    },
+    "T0021": {
+      "source": "multiagent/data/temples/T0021.json#darshan_timings",
+      "source_sha256": "bd004714e2db9bebdc08b0a3cf565e73a714e33b21859ebdf39f9e31b8d537eb",
+      "note": "No valid ordinary-day public-access window supplied; festival examples are not recurring availability.",
+      "weekday_windows": {},
+      "windows": []
+    },
+    "T0022": {
+      "source": "multiagent/data/temples/T0022.json#darshan_timings",
+      "source_sha256": "0245c5c953c08f870b5240137c1b2af59400991fa90aa23af8339c1dced822c8",
+      "note": "Museum only: conservative 9 AM–5 PM entry window. Scheduling the whole visit before last entry is deliberate.",
+      "weekday_windows": {},
+      "windows": [
+        [
+          540,
+          1020
+        ]
+      ]
+    },
+    "T0023": {
+      "source": "multiagent/data/temples/T0023.json#darshan_timings",
+      "source_sha256": "039786bb4d324959be70bdc3189da7bc13ed7030ff5e97203756367f68b4d3a7",
+      "note": "Only published General Darshan blocks, with the later 2:30 PM evening start.",
+      "weekday_windows": {},
+      "windows": [
+        [
+          390,
+          750
+        ],
+        [
+          870,
+          1230
+        ]
+      ]
+    }
+  }
+}
