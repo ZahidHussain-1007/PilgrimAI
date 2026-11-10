@@ -54,12 +54,38 @@ def _viewbox() -> str:
     return f"{min_lon},{max_lat},{max_lon},{min_lat}"
 
 
+def _address_parts(item: dict[str, Any]) -> dict[str, str | None]:
+    """Pull administrative context out of a Nominatim `address` object.
+
+    Only fields the provider actually returned are used; anything missing
+    stays None rather than being guessed.
+    """
+    address = item.get("address")
+    if not isinstance(address, dict):
+        address = {}
+    return {
+        "state": address.get("state") or address.get("region"),
+        "district": address.get("state_district") or address.get("county"),
+        "country": address.get("country"),
+        "country_code": (item.get("country_code") or "").lower() or None,
+    }
+
+
 def search(
     query: str,
     *,
     timeout_seconds: float | None = None,
     limit: int = 5,
+    country_code: str | None = None,
+    use_service_viewbox: bool = True,
 ) -> list[PlaceCandidate]:
+    """Geocode free text.
+
+    `use_service_viewbox=True` keeps the legacy behaviour used for temple
+    destinations (bias towards the catalogue's service area). Origins pass
+    False so a nationwide query is never biased towards Telangana, which is
+    what caused "Shirdi" to resolve to a Khammam locality.
+    """
     started_at = time.monotonic()
 
     try:
@@ -75,11 +101,13 @@ def search(
             "format": "jsonv2",
             "limit": limit,
             "addressdetails": 1,
-            # Bias towards the Telangana service scope (resolver still
-            # hard-filters out-of-scope hits).
+            # Bias towards the service scope (the resolver still hard-filters
+            # out-of-scope hits for destinations).
             "bounded": 0,
         }
-        viewbox = _viewbox()
+        if country_code:
+            params_map["countrycodes"] = country_code.lower()
+        viewbox = _viewbox() if use_service_viewbox else ""
         if viewbox:
             params_map["viewbox"] = viewbox
         params = urllib.parse.urlencode(params_map)
@@ -108,6 +136,7 @@ def search(
 
         for item in payload:
             try:
+                context = _address_parts(item)
                 candidates.append(
                     PlaceCandidate(
                         display_name=str(
@@ -122,6 +151,7 @@ def search(
                             if item.get("importance") is not None
                             else None
                         ),
+                        **context,
                     )
                 )
             except (KeyError, TypeError, ValueError):
