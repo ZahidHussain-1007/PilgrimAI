@@ -37,6 +37,46 @@ def _item(kind, title, start, end, **kw):
     }
 
 
+def day_purpose(day, index, day_count, origin_id="origin", lodging_id=None):
+    """Why a day is a real part of the itinerary, or None if it is empty.
+
+    v23.2: requiring a temple visit on *every* day made a legitimate
+    final-day return journey ("check out, drive home") unrepresentable, so
+    single-temple overnight trips could never pass validation.
+
+    A day counts when it contains at least one committed activity:
+      * a temple visit;
+      * a check-in or check-out;
+      * a completed journey to the overnight lodging (arrival/transfer day);
+      * a completed journey back to the origin on the final day.
+
+    An empty day is still reported - the product does not invent free days.
+    """
+    items = day.get("items", [])
+    for item in items:
+        if item.get("type") == "visit":
+            return "visit"
+    for item in items:
+        if item.get("type") in {"checkin", "checkout"}:
+            return item["type"]
+    completed = [
+        item
+        for item in items
+        if item.get("type") == "travel"
+        and item.get("leg_complete")
+        and item.get("to_id") is not None
+    ]
+    if lodging_id is not None and any(
+        item.get("to_id") == lodging_id for item in completed
+    ):
+        return "transfer"
+    if index == day_count - 1 and any(
+        item.get("to_id") == origin_id for item in completed
+    ):
+        return "return"
+    return None
+
+
 def _allowances(req, place=None):
     visit = max(req.visit_minutes, (place or {}).get("visit_minutes") or 0) + (
         20 if req.elderly or req.special in {"elder", "wheel", "medical"} else 0
@@ -51,6 +91,12 @@ def _journey(state, destination, matrix, req):
     a restaurant, rest-stop coordinate, service or a different road distance.
     All segments preserve the same evidenced leg; distance is apportioned only.
     """
+    if state.location == destination:
+        # Already at the destination: this is not a route at all, so no
+        # provider leg is required and none is invented. Route matrices never
+        # contain self-pairs, which used to make "visit the place you are
+        # staying at tomorrow" impossible and left a middle day empty.
+        return deepcopy(state)
     leg = matrix.get(state.location + ">" + destination)
     if not leg or leg.get("minutes") is None or leg.get("km") is None:
         return None
@@ -419,7 +465,44 @@ def solve(
                 if rest:
                     items.append(_item("rest", "rest_break", end, end + rest))
                 candidate.mask |= 1 << index
-                candidate.now = end + rest
+                # v23.2: a meal threshold crossed while standing still (during
+                # the visit or the opening wait) is still a crossed meal. Only
+                # _journey() used to reserve meals, so a short single-temple
+                # day silently lost breakfast and failed MEAL_MISSING.
+                cursor = end + rest
+                for name, target, earliest in MEALS:
+                    if name in candidate.meals:
+                        continue
+                    if start > target:
+                        # The threshold passed before the day began.
+                        continue
+                    if cursor < target:
+                        continue
+                    meal_start = max(cursor, earliest)
+                    meal_end = (
+                        meal_start
+                        + math.ceil(req.meal_minutes / req.time_grid_minutes)
+                        * req.time_grid_minutes
+                    )
+                    if meal_end > finish:
+                        # Does not fit today; the validator reports it rather
+                        # than us shortening a visit or inventing a venue.
+                        continue
+                    items.append(
+                        _item(
+                            "meal",
+                            "meal_break",
+                            meal_start,
+                            meal_end,
+                            meal=name,
+                            venue="unconfirmed en-route stop",
+                            verification="unconfirmed",
+                            location_id=None,
+                        )
+                    )
+                    candidate.meals.add(name)
+                    cursor = meal_end
+                candidate.now = cursor
                 candidates.append(candidate)
             # A failed visit today may become possible on a later weekday. Empty
             # days are retained, not silently shifted or represented as visits.
@@ -523,8 +606,13 @@ def solve(
             req.days,
         )
         covered = sum(any(i["type"] == "visit" for i in d["items"]) for d in s.days)
+        # v23.2: an empty day is a failed day (DAY_UNPLANNED). Prefer any
+        # schedule that fills each requested day with a committed purpose -
+        # spreading a visit or an arrival/return leg - before optimising cost.
+        empty_days = sum(1 for d in s.days if not d["items"])
         if "quick" in req.priorities:
             return (
+                empty_days,
                 req.days - covered,
                 cap_exceeded,
                 primary_day,
@@ -535,6 +623,7 @@ def solve(
         # Spread visits over the requested duration when possible. Empty/free
         # days are explicit; they are never charged as fictional temple visits.
         return (
+            empty_days,
             req.days - covered,
             cap_exceeded,
             primary_day,
@@ -595,7 +684,8 @@ def validate(req, temples, result, matrix, hotel=None):
     if len(days) != req.days:
         error("DAY_COUNT_INVALID", [len(days)])
     for index, day in enumerate(days):
-        if not any(i.get("type") == "visit" for i in day.get("items", [])):
+        lodging = hotel["id"] if hotel else None
+        if day_purpose(day, index, len(days), lodging_id=lodging) is None:
             error("DAY_UNPLANNED", [day.get("date")])
         if day["date"] != (req.start_date + timedelta(days=index)).isoformat():
             error("DATE_INVALID", [day["date"]])
