@@ -334,6 +334,18 @@ def plan(
                     "reason": "Provide a property record with coordinates, adult capacity, extra-bed policy, check-in/out times and a date-specific quote; or explicitly choose daily return.",
                 }
             )
+        if codes & {"ROUND_TRIP_TOO_LONG", "ARRIVAL_AFTER_CLOSING"}:
+            alternatives.append(
+                {
+                    "action": "change_origin_or_days",
+                    "suggested_days": min(7, req.days + 1),
+                    "reason": (
+                        "Your starting point is too far for the days requested: "
+                        "the drive alone leaves no usable visiting window. Add a "
+                        "day, reduce the number of temples, or start closer."
+                    ),
+                }
+            )
         if "DAY_UNPLANNED" in codes and "HOTEL_REQUIREMENTS_UNVERIFIED" not in codes:
             alternatives.append(
                 {

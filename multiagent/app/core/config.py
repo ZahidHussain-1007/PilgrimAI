@@ -38,10 +38,25 @@ class Settings(BaseSettings):
     nominatim_user_agent: str = "PilgrimAI/1.0"
     nominatim_timeout_s: float = 5.0
     nominatim_min_interval_s: float = 1.1
-    # Service scope (Telangana + margin): min_lat,min_lon,max_lat,max_lon.
-    # Live geocoder results outside this box are dropped - the product
-    # answers for Telangana only, never Kolkata/Jaipur/... candidates.
+    # --- Geographic scope (v23.2: configurable, not hardcoded) ---
+    # DESTINATION scope: the temple catalogue is Telangana only, so a live
+    # geocoder hit outside this box must never become a destination.
+    # min_lat,min_lon,max_lat,max_lon. Override with GEO_SCOPE_BBOX.
     geo_scope_bbox: str = "15.6,76.6,20.3,81.5"
+    # Set GEO_SCOPE_ENABLED=false to disable destination filtering entirely
+    # (only useful if the catalogue itself becomes nationwide).
+    geo_scope_enabled: bool = True
+    # ORIGIN scope: starting points are nationwide. Origins are resolved
+    # against this country only and are never filtered by geo_scope_bbox,
+    # otherwise "Mumbai" is silently answered with a Telangana hamlet.
+    origin_country: str = "India"
+    origin_country_code: str = "in"
+    # Bounding box for origin validation: India + sea margin.
+    # min_lat,min_lon,max_lat,max_lon. Override with ORIGIN_BBOX.
+    origin_bbox: str = "6.5,68.0,37.5,97.5"
+    # Append ", <country>" to geocoder queries for origins. Keeps names like
+    # "Shirdi" from resolving to a same-named locality inside Telangana.
+    origin_append_country: bool = True
 
     # --- OpenStreetMap Overpass (keyless nearby search, failover list) ---
     overpass_urls: str = (

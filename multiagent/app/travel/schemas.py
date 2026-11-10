@@ -33,6 +33,12 @@ class PlaceCandidate(BaseModel):
     source: str
     place_type: str | None = None
     importance: float | None = None
+    # v23.2: administrative context from the geocoder's address details.
+    # All optional, so every existing caller stays source-compatible.
+    state: str | None = None
+    district: str | None = None
+    country: str | None = None
+    country_code: str | None = None
 
 
 class ResolvedPlace(BaseModel):
@@ -43,6 +49,11 @@ class ResolvedPlace(BaseModel):
     canonical_entity_id: str | None = None
     canonical_entity_type: str | None = None
     confidence: float | None = None
+    # v23.2: resolved administrative context (origins need state/country so a
+    # city name is never silently mapped to a same-named locality elsewhere).
+    state: str | None = None
+    country: str | None = None
+    country_code: str | None = None
 
 
 class TravelFact(BaseModel):

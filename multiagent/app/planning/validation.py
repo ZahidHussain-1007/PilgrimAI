@@ -7,7 +7,12 @@ from datetime import timedelta
 
 from .calendar import minutes
 from .costing import CATEGORIES
-from .solver import validate as timeline_validate
+from .solver import (
+    State,
+    _journey,
+    day_purpose,
+    validate as timeline_validate,
+)
 
 
 def validate(req, places, schedule, matrix, options, budget):
@@ -44,16 +49,121 @@ def validate(req, places, schedule, matrix, options, budget):
     if any(t not in known for t in actual):
         error("UNEVIDENCED_VISIT", actual)
     if req.stay_mode == "overnight" and hotel is None:
-        error(
-            "HOTEL_REQUIREMENTS_UNVERIFIED",
-            "Need a locatable property with evidenced room capacity and check-in/out times.",
-        )
+        area = options.get("overnight_area")
+        if area and req.allow_unconfirmed_stay:
+            # The traveller accepted a conditional stay and the night is
+            # anchored on the destination area. Still reported - as a
+            # warning, because nothing about a property is confirmed - but
+            # it no longer blocks an otherwise schedulable route.
+            warn(
+                "STAY_UNVERIFIED",
+                area.get("name") or area.get("id"),
+                options.get("hotel_unverified_reason")
+                or "No property has evidenced room capacity and check-in/out times.",
+            )
+        else:
+            error(
+                "HOTEL_REQUIREMENTS_UNVERIFIED",
+                options.get("hotel_unverified_reason")
+                or "No property has evidenced room capacity, coordinates and "
+                "check-in/out times. Choose an unverified stay area, or add a "
+                "property record with verified capacity and location.",
+            )
     if req.stay_mode == "daily_return" and any(
         i.get("type") in {"checkin", "checkout"}
         for d in days
         for i in d.get("items", [])
     ):
         error("HOTEL_WITH_DAILY_RETURN")
+    # v23.2: "the visit is missing" is accurate but useless when the real
+    # reason is that the starting point is too far away. These diagnostics
+    # only ever run when no visit was scheduled, so they can never change a
+    # passing plan - they replace a vague failure with an actionable one.
+    if not actual and req.days and days:
+        out = matrix.get("origin>" + req.primary_temple_id) or {}
+        back = matrix.get(req.primary_temple_id + ">origin") or {}
+        if out.get("minutes") is not None and back.get("minutes") is not None:
+            round_trip = float(out["minutes"]) + float(back["minutes"])
+            per_day = minutes(req.finish) - minutes(req.departure)
+            available = per_day * req.days
+            if round_trip > available:
+                error(
+                    "ROUND_TRIP_TOO_LONG",
+                    f"{round_trip / 60:.1f} h of driving is needed for the "
+                    f"round trip, but {req.days} day(s) only allow "
+                    f"{available / 60:.1f} h.",
+                )
+            else:
+                # Reuse the solver's own journey arithmetic (breaks included)
+                # so the diagnosis matches the failure instead of guessing
+                # from raw provider minutes.
+                finish = minutes(req.finish)
+                probe = State(
+                    0,
+                    0,
+                    "origin",
+                    minutes(req.departure),
+                    0.0,
+                    [{"date": days[0]["date"], "items": []}],
+                )
+                outbound = _journey(probe, req.primary_temple_id, matrix, req)
+                # You can only drive home after the visit, so the return probe
+                # starts at the earliest possible departure from the temple.
+                earliest_return = (
+                    minutes(req.departure)
+                    + req.parking_buffer_minutes
+                    + req.visit_minutes
+                    + req.rest_minutes
+                )
+                returning = _journey(
+                    State(
+                        0,
+                        0,
+                        req.primary_temple_id,
+                        earliest_return,
+                        0.0,
+                        [{"date": days[0]["date"], "items": []}],
+                    ),
+                    "origin",
+                    matrix,
+                    req,
+                )
+                too_long = None
+                if outbound and outbound.now > finish:
+                    too_long = outbound.now - minutes(req.departure)
+                elif returning and returning.now > finish:
+                    too_long = returning.now - earliest_return
+                if too_long is not None:
+                    error(
+                        "DRIVE_EXCEEDS_DAILY_WINDOW",
+                        f"This drive takes about {too_long / 60:.1f} h "
+                        f"(breaks included) and cannot fit in a "
+                        f"{req.departure}-{req.finish} planning day. Add a day "
+                        f"or start closer.",
+                    )
+                elif outbound:
+                    primary = next(
+                        (p for p in places if p.get("id") == req.primary_temple_id),
+                        {},
+                    )
+                    arrival = outbound.now + req.parking_buffer_minutes
+                    closings = [
+                        max(hi for _lo, hi in primary["windows"].get(day["date"], []))
+                        for day in days
+                        if primary.get("windows", {}).get(day["date"])
+                    ]
+                    if closings and all(
+                        arrival + req.visit_minutes > closing
+                        for closing in closings
+                    ):
+                        error(
+                            "ARRIVAL_AFTER_CLOSING",
+                            f"Leaving at {req.departure} reaches "
+                            f"{req.primary_temple_id} at "
+                            f"{arrival // 60:02d}:{arrival % 60:02d}, after the "
+                            f"published visiting windows close on every "
+                            f"requested date.",
+                        )
     if actual:
         synthetic = req.model_copy(update={"temple_ids": list(dict.fromkeys(actual))})
         try:
@@ -81,7 +191,7 @@ def validate(req, places, schedule, matrix, options, budget):
                     tid,
                     "Shortest evidenced round-trip already exceeds the daily driving cap.",
                 )
-    for day in days:
+    for day_index, day in enumerate(days):
         items = day.get("items", [])
         if req.time_grid_minutes > 1 and any(
             minutes(i["start"]) % req.time_grid_minutes
@@ -90,7 +200,16 @@ def validate(req, places, schedule, matrix, options, budget):
         ):
             error("TIME_GRID_INVALID", day.get("date"))
         visits = [i for i in items if i.get("type") == "visit"]
-        if not visits:
+        # v23.2: a day with a committed non-visit purpose (final-day return,
+        # check-in/out, transfer to the lodging) is planned. Requiring a visit
+        # every day made single-temple overnight trips unrepresentable.
+        lodging = (
+            (options.get("selected_hotel") or options.get("overnight_area") or {}).get("id")
+        )
+        purpose = day_purpose(
+            day, day_index, len(days), lodging_id=lodging
+        )
+        if purpose is None:
             error(
                 "DAY_UNPLANNED",
                 day.get("date"),

@@ -15,44 +15,6 @@ import { youtubeVideoId } from "../../lib/youtube"
 import { useT } from "../../lib/i18n"
 import { TempleVideoPlayer, type VideoItem } from "./TempleVideoPlayer"
 
-/** Real coordinates for common starting cities — distance is only shown
- *  when the typed origin matches a known city (no invented numbers). */
-const ORIGIN_COORDS: Record<string, [number, number]> = {
-  hyderabad: [17.385, 78.4867],
-  secunderabad: [17.4435, 78.489],
-  warangal: [17.9689, 79.594],
-  hanumakonda: [17.9891, 79.5362],
-  khammam: [17.2473, 80.1514],
-  nalgonda: [17.0575, 79.268],
-  karimnagar: [18.4386, 79.1288],
-  mahbubnagar: [16.7488, 77.983],
-  nizamabad: [18.6725, 78.0941],
-  ramagundam: [18.7596, 79.4765],
-  siddipet: [18.1018, 78.8521],
-  adilabad: [19.6641, 78.532],
-  sangareddy: [17.6284, 78.0916],
-  medak: [18.0453, 78.2608],
-  jagtial: [18.7896, 78.9147],
-  kothagudem: [17.5547, 80.6197],
-  vijayawada: [16.5062, 80.648],
-}
-
-function distanceKm(origin: string, lat: number, lon: number): number | null {
-  const key = origin.trim().toLowerCase()
-  const home = ORIGIN_COORDS[key]
-  if (!home || !lat || !lon) return null
-  const R = 6371
-  const dLat = ((lat - home[0]) * Math.PI) / 180
-  const dLon = ((lon - home[1]) * Math.PI) / 180
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos((home[0] * Math.PI) / 180) *
-      Math.cos((lat * Math.PI) / 180) *
-      Math.sin(dLon / 2) ** 2
-  const km = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-  return Math.round(km * 10) / 10 // straight-line distance, never a road claim
-}
-
 const TRANSPORT = [
   { v: "car", labelKey: "plan.transportCar" },
   { v: "bus", labelKey: "plan.transportBus" },
@@ -313,16 +275,9 @@ export default function TripPlanner({
     value: string
     label: string
   }[] = []
-  const km = distanceKm(origin, activeTemple.lat, activeTemple.lon)
-  if (km != null) {
-    strip.push({
-      icon: "pin",
-      value: t("plan.distFrom")
-        .replace("{km}", String(km))
-        .replace("{city}", origin.trim()),
-      label: p("straightLine"),
-    })
-  }
+  // v23.2: the "X km from <city>" chip used a 17-city hardcoded coordinate
+  // table, so it silently vanished for every other Indian origin. Real
+  // distances now come from the planning service's road matrix instead.
   if (activeTemple.darshanHours) {
     strip.push({
       icon: "clock",

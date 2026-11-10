@@ -1,5 +1,6 @@
 {
   "temple_id": "T0004",
+  "video_url": "https://youtu.be/1AmuDUHBsf4",
   "name": "Sri Gnana Saraswathi Devasthanam",
   "alternate_names": [
     "Gnana Saraswathi Temple, Basara",
@@ -318,8 +319,8 @@
     ]
   },
   "images": [
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/d/de/Basara_Saraswathi_Temple_India.jpg/1280px-Basara_Saraswathi_Temple_India.jpg",
-    "https://maps.googleapis.com/maps/api/streetview (Google Maps street view, per user-pasted Google Maps URL)"
+    "https://ourtemples.info/wp-content/uploads/2026/01/Basara-Saraswathy-2.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/d/de/Basara_Saraswathi_Temple_India.jpg/1280px-Basara_Saraswathi_Temple_India.jpg"
   ],
   "wikidata": {
     "wikidata_id": "Q7521417",

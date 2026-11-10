@@ -263,6 +263,10 @@ def _resolve_from_geography_registry(
         )
     )
 
+    # v23.2: carry the registry's own administrative context so callers can
+    # report "Hyderabad, Telangana" instead of a bare city name.
+    location = place.get("location") or {}
+
     return ResolvedPlace(
         query=query,
         display_name=canonical_name,
@@ -278,34 +282,222 @@ def _resolve_from_geography_registry(
             )
         ),
         confidence=1.0,
+        state=location.get("state"),
+        country=location.get("country"),
+        country_code="in" if str(location.get("country", "")).lower() == "india" else None,
+    )
+
+
+def _parse_bbox(value: str) -> tuple[float, float, float, float] | None:
+    try:
+        min_lat, min_lon, max_lat, max_lon = (float(p) for p in value.split(","))
+    except (AttributeError, TypeError, ValueError):
+        return None
+    return min_lat, min_lon, max_lat, max_lon
+
+
+def _in_bbox(candidate: PlaceCandidate, bbox: tuple[float, float, float, float]) -> bool:
+    min_lat, min_lon, max_lat, max_lon = bbox
+    return (
+        min_lat <= candidate.latitude <= max_lat
+        and min_lon <= candidate.longitude <= max_lon
     )
 
 
 def _within_geo_scope(
     candidates: list[PlaceCandidate],
+    scope: str = "destination",
 ) -> list[PlaceCandidate]:
-    """Drop live-geocoder hits outside the configured service area
-    (Telangana + margin) so clarification lists never show Kolkata/Jaipur
-    style results."""
+    """Filter live-geocoder hits by geography.
+
+    v23.2: destinations keep the Telangana catalogue scope (configurable via
+    GEO_SCOPE_BBOX / GEO_SCOPE_ENABLED). Origins are nationwide - they are
+    filtered by the India bounding box only, because the temple catalogue
+    constrains *destinations*, not where a pilgrim starts from.
+
+    Filtering origins by the Telangana box is what used to make "Mumbai"
+    ambiguous and "Shirdi" resolve to a Khammam hamlet.
+    """
     if not candidates:
         return []
-    try:
-        min_lat, min_lon, max_lat, max_lon = (
-            float(part)
-            for part in settings.geo_scope_bbox.split(",")
-        )
-    except (AttributeError, TypeError, ValueError):
+
+    if scope == "origin":
+        bbox = _parse_bbox(settings.origin_bbox)
+        if bbox is None:
+            return candidates
+        country = (settings.origin_country_code or "").lower()
+        scoped = [c for c in candidates if _in_bbox(c, bbox)]
+        if country:
+            # Prefer hits the geocoder explicitly placed in the target
+            # country; keep unlabelled hits so a provider that omits
+            # address details does not empty the list.
+            labelled = [
+                c for c in scoped if (c.country_code or "").lower() == country
+            ]
+            foreign = [
+                c
+                for c in scoped
+                if c.country_code and (c.country_code or "").lower() != country
+            ]
+            scoped = labelled or [c for c in scoped if c not in foreign]
+        return scoped
+
+    if not settings.geo_scope_enabled:
         return candidates
-    return [
-        candidate
-        for candidate in candidates
-        if min_lat <= candidate.latitude <= max_lat
-        and min_lon <= candidate.longitude <= max_lon
+    bbox = _parse_bbox(settings.geo_scope_bbox)
+    if bbox is None:
+        return candidates
+    return [c for c in candidates if _in_bbox(c, bbox)]
+
+
+SETTLEMENT_TYPES = {
+    "city",
+    "town",
+    "village",
+    "municipality",
+    "administrative",
+    "locality",
+    "suburb",
+    "hamlet",
+    "isolated_dwelling",
+}
+
+# Terms that mean "this is a settlement, not a landmark/amenity".
+_ADMIN_TYPES = {"administrative", "city", "town", "municipality", "village"}
+
+
+def _state_of(candidate: PlaceCandidate) -> str | None:
+    return candidate.state
+
+
+def _rank_origin(candidate: PlaceCandidate) -> tuple:
+    """Prefer real settlements, then geocoder confidence."""
+    is_admin = candidate.place_type in _ADMIN_TYPES
+    is_settlement = candidate.place_type in SETTLEMENT_TYPES
+    return (
+        0 if is_admin else (1 if is_settlement else 2),
+        -(candidate.importance or 0.0),
+    )
+
+
+def _query_state_hint(query: str) -> str | None:
+    """Return the trailing administrative hint in 'Shirdi, Maharashtra'."""
+    if "," not in query:
+        return None
+    tail = query.rsplit(",", 1)[1].strip()
+    return tail or None
+
+
+def resolve_origin_place(query: str) -> ResolvedPlace:
+    """Resolve a nationwide starting city.
+
+    Rules, in order:
+      * query is confined to the configured origin country;
+      * results are filtered by the India bounding box, not the Telangana
+        catalogue box;
+      * an explicit state in the query ("Shirdi, Maharashtra") narrows the
+        candidates to that state;
+      * the winner must be a settlement, not a random amenity;
+      * two equally plausible settlements in different states raise a
+        clarification error that names the states instead of silently
+        picking one.
+    """
+    country = settings.origin_country or "India"
+    country_code = (settings.origin_country_code or "").lower() or None
+
+    cleaned = query.strip().strip(",").strip()
+    if not cleaned:
+        raise TravelResolverError("Starting location cannot be empty.")
+
+    hinted_state = _query_state_hint(cleaned)
+    searches: list[str] = []
+    if settings.origin_append_country:
+        if hinted_state and hinted_state.lower() in {
+            "india",
+            str(country).lower(),
+        }:
+            searches.append(cleaned)
+        else:
+            searches.append(f"{cleaned}, {country}")
+    searches.append(cleaned)
+    searches = list(dict.fromkeys(searches))
+
+    collected: list[PlaceCandidate] = []
+    for text in searches:
+        try:
+            hits = nominatim_search(
+                text,
+                limit=8,
+                timeout_seconds=8,
+                country_code=country_code,
+                use_service_viewbox=False,
+            )
+        except Exception:  # provider down -> try the next form
+            continue
+        collected = _within_geo_scope(hits, scope="origin")
+        if collected:
+            break
+
+    if not collected:
+        raise TravelResolverError(
+            f"'{query}' could not be found in {country}. "
+            "Enter an Indian city or district name, for example "
+            "'Nizamabad' or 'Pune, Maharashtra'."
+        )
+
+    # Drop landmarks/amenities when at least one settlement was returned.
+    settlements = [c for c in collected if c.place_type in SETTLEMENT_TYPES]
+    pool = settlements or collected
+
+    # Honour an explicit ", <state>" hint in the query.
+    if hinted_state:
+        hint = hinted_state.lower()
+        narrowed = [
+            c
+            for c in pool
+            if (c.state or "").lower() == hint
+            or (c.district or "").lower() == hint
+            or (c.display_name or "").lower().find(hint) >= 0
+        ]
+        if narrowed:
+            pool = narrowed
+
+    pool = sorted(pool, key=_rank_origin)
+    top = pool[0]
+    top_state = (_state_of(top) or "").lower()
+
+    # Ambiguity: another equally plausible settlement in a different state.
+    rivals = [
+        c
+        for c in pool[1:]
+        if c.place_type in _ADMIN_TYPES
+        and (_state_of(c) or "").lower() != top_state
+        and abs((c.importance or 0.0) - (top.importance or 0.0)) < 0.02
     ]
+    if rivals:
+        raise TravelResolverClarificationError(
+            query=query,
+            candidates=[top] + rivals[:4],
+        )
+
+    return ResolvedPlace(
+        query=query,
+        display_name=top.display_name,
+        coordinates=Coordinate(
+            latitude=top.latitude,
+            longitude=top.longitude,
+        ),
+        source="nominatim_origin",
+        confidence=top.importance,
+        state=top.state,
+        country=top.country,
+        country_code=top.country_code,
+    )
 
 
 def resolve_place(
     value: Any,
+    scope: str = "destination",
 ) -> ResolvedPlace:
     """
     Deterministic resolution order:
@@ -314,6 +506,9 @@ def resolve_place(
     2. Named canonical entity -> Entity Registry.
     3. Known geographic place -> Geography Registry.
     4. Unknown/free text -> Nominatim.
+
+    `scope="origin"` resolves nationwide (see resolve_origin_place);
+    `scope="destination"` keeps the catalogue's service-area filter.
     """
 
     entity_result = _resolve_from_entity_registry(
@@ -364,19 +559,24 @@ def resolve_place(
     if geographic_place is not None:
         return geographic_place
 
+    if scope == "origin":
+        return resolve_origin_place(query)
+
     raw_candidates = nominatim_search(
         query,
         limit=5,
     )
-    candidates = _within_geo_scope(raw_candidates)
+    candidates = _within_geo_scope(raw_candidates, scope="destination")
 
     if not candidates:
         # Distinguish "no geocoder hit" from "hits exist but all outside
-        # our Telangana service area" - never offer out-of-scope places.
+        # the catalogue service area" - never offer out-of-scope places.
         if raw_candidates:
             raise TravelResolverError(
                 f"'{query}' matches places only outside the Telangana "
-                "service area; PilgrimAI covers Telangana."
+                "temple catalogue area; PilgrimAI's destinations are in "
+                "Telangana. You can still start your journey from anywhere "
+                "in India."
             )
         raise TravelResolverError(
             f"Unable to resolve travel place: {query}"

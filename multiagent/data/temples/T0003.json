@@ -1,5 +1,6 @@
 {
   "temple_id": "T0003",
+  "video_url": "https://youtu.be/7Ba5NjWPnyI",
   "name": "Sri Raja Rajeshwara Swamy Devasthanam",
   "alternate_names": [
     "Sri Raja Rajeswara Swamy Temple",
@@ -324,8 +325,8 @@
     ]
   },
   "images": [
-    "https://upload.wikimedia.org/wikipedia/commons/a/a7/Vemalawada_Ramanna_Temple.jpg",
-    "https://maps.googleapis.com/maps/api/streetview (Google Maps street view, per user-pasted Google Maps URL)"
+    "https://namakoti.com/public/uploads/templeinfo/28/vemulawada.png",
+    "https://upload.wikimedia.org/wikipedia/commons/a/a7/Vemalawada_Ramanna_Temple.jpg"
   ],
   "wikidata": {
     "wikidata_id": "Q7285775",

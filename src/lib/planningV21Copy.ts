@@ -349,6 +349,27 @@ const gates: Record<string, [string, string, string]> = {
     "తప్పనిసరి సందర్శన లేదు లేదా పునరావృతమైంది",
     "आवश्यक यात्रा गायब या दोहराई गई है",
   ],
+  // v23.2: a distant origin used to surface only as "a day is incomplete".
+  ROUND_TRIP_TOO_LONG: [
+    "The drive alone takes longer than the days you selected",
+    "ప్రయాణం మాత్రమే మీరు ఎంచుకున్న రోజులకు మించి సమయం తీసుకుంటుంది",
+    "यात्रा ही आपके चुने दिनों से अधिक समय लेती है",
+  ],
+  DRIVE_EXCEEDS_DAILY_WINDOW: [
+    "A single drive is longer than one planning day",
+    "ఒకే ప్రయాణం ఒక ప్లానింగ్ రోజు కంటే ఎక్కువ",
+    "एक ही यात्रा एक नियोजन दिन से अधिक लंबी है",
+  ],
+  ARRIVAL_AFTER_CLOSING: [
+    "Driving from your starting point arrives after the temple closes",
+    "మీ ప్రారంభ స్థలం నుండి వెళ్లేటప్పుడు ఆలయం మూసివేసిన తర్వాత చేరుతారు",
+    "आपके प्रारंभ स्थान से पहुँचते-पहुँचते मंदिर बंद हो जाता है",
+  ],
+  STAY_UNVERIFIED: [
+    "No property is verified for this stay — this is a conditional draft",
+    "ఈ బసకు ఏ ఆస్తి ధృవీకరించబడలేదు — ఇది షరతులతో కూడిన ప్రతిపాదన",
+    "इस ठहराव के लिए कोई संपत्ति सत्यापित नहीं है — यह एक सशर्त मसौदा है",
+  ],
   PRICED_COSTS_EXCEED_CAP: [
     "Priced costs exceed the budget cap",
     "ధర తెలిసిన ఖర్చులు బడ్జెట్ పరిమితి మించాయి",

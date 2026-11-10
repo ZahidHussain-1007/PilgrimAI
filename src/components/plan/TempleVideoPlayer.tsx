@@ -1,6 +1,9 @@
 "use client"
 
-import { requestHighestVideoQuality } from "../../lib/youtube"
+import {
+  requestHighestVideoQuality,
+  YOUTUBE_EMBED_PARAMS,
+} from "../../lib/youtube"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useT } from "../../lib/i18n"
 import { youtubeWatchUrl } from "../../lib/youtube"
@@ -69,9 +72,24 @@ function loadYT(): Promise<any> {
  * pause respected, form edits never restart, runtime errors drop the entry,
  * accessible play/pause lives OUTSIDE the picture, StrictMode-safe cleanup.
  *
- * Quality note: YouTube IFrame setPlaybackQuality is no longer honored —
- * playback is adaptive. No false claims.
+ * YouTube presentational limits (official, not worked around):
+ *   setPlaybackQuality / getAvailableQualityLevels / vq= were retired in the
+ *   IFrame API revision of 24 Oct 2019 and are no-ops today, so playback
+ *   quality is chosen by YouTube (connection, player size, browser, source
+ *   upload). The title/channel overlay, the watermark, the large paused-state
+ *   play button and letterbox bars for non-16:9 uploads cannot be removed
+ *   through the supported API either. Each would need CSS overlays, cropping
+ *   or an oversized iframe — all of which breach the YouTube Embedded Player
+ *   policies — so none of them are done here. See YOUTUBE_EMBED_PARAMS in
+ *   src/lib/youtube.ts for the full per-parameter account.
  */
+/**
+ * The app's own fullscreen button (the only remaining fullscreen path once
+ * YouTube's control bar is hidden with controls:0 and its button with fs:0).
+ * Set to false to remove the control entirely.
+ */
+const SHOW_FULLSCREEN_CONTROL = true
+
 export function TempleVideoPlayer({
   items,
   index,
@@ -170,15 +188,9 @@ export function TempleVideoPlayer({
           width: "100%",
           height: "100%",
           videoId,
-          playerVars: {
-            autoplay: 1,
-            mute: 1,
-            controls: 0,
-            rel: 0,
-            playsinline: 1,
-            modestbranding: 1,
-            disablekb: 1,
-          },
+          // Documented in src/lib/youtube.ts — only supported params,
+          // no CSS/cropping workarounds.
+          playerVars: { ...YOUTUBE_EMBED_PARAMS },
           events: {
             onReady: (e: any) => {
               if (gen !== ytGenRef.current) return
@@ -428,7 +440,7 @@ export function TempleVideoPlayer({
         )}
 
         {/* fullscreen — the ONLY overlay control on the picture */}
-        {engine !== "none" && (
+        {SHOW_FULLSCREEN_CONTROL && engine !== "none" && (
           <button
             type="button"
             onClick={toggleFullscreen}

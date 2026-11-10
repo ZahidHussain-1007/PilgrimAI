@@ -109,17 +109,21 @@ describe("real planning contracts", () => {
         if (!key.includes(" ")) expect(text).not.toBe(key);
       }
   });
-  it("uses only real supplied clips: eleven distinct temples, twelve clips", () => {
+  it("maps every one of the 23 temples to exactly one real clip", () => {
     const temples = loadTemples();
     expect(temples.length).toBe(23);
     const withVideo = temples.filter((t) => t.videoUrl);
-    expect(withVideo.length).toBe(11);
+    expect(withVideo.length).toBe(23);
     expect(
       withVideo.reduce((sum, t) => sum + (t.videoUrls?.length || 0), 0),
-    ).toBe(12);
-    expect(temples.find((t) => t.templeId === "T0014")?.videoUrls).toContain(
+    ).toBe(23);
+    // the stale Ramappa second clip now belongs to Kaleshwara (T0007)
+    expect(temples.find((t) => t.templeId === "T0007")?.videoUrl).toBe(
       "https://youtu.be/yjRxKWxewqM",
     );
+    expect(temples.find((t) => t.templeId === "T0014")?.videoUrls).toEqual([
+      "https://youtu.be/YflzmixmTKc",
+    ]);
     expect(temples.find((t) => t.templeId === "T0019")?.videoUrl).toBe(
       "https://youtu.be/aNInk-5uK38",
     );
