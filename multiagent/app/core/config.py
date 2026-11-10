@@ -57,9 +57,6 @@ class Settings(BaseSettings):
     # Append ", <country>" to geocoder queries for origins. Keeps names like
     # "Shirdi" from resolving to a same-named locality inside Telangana.
     origin_append_country: bool = True
-    # Minimum nomiatim importance for an origin hit to be accepted when it is
-    # the only candidate (guards against resolving a typo to a random hamlet).
-    origin_min_importance: float = 0.0
 
     # --- OpenStreetMap Overpass (keyless nearby search, failover list) ---
     overpass_urls: str = (
