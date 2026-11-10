@@ -1,5 +1,19 @@
 """Scoped planning-origin adapter. Names are not inferred coordinates.
-City/district duplicates from geocoding are not resolved using importance alone.
+
+v23.2: origins may start anywhere in India. Resolution order:
+
+1. Telangana district spelling correction (typo tolerance kept, e.g.
+   "nizambad" -> "Nizamabad"). This only rewrites the *spelling*; it never
+   claims a non-Telangana city is in Telangana.
+2. Telangana cities resolve through the geography registry / scoped
+   geocoder exactly as before.
+3. Everything else resolves nationwide through `resolve_origin_place`,
+   which confines the search to India, prefers settlements over landmarks,
+   honours an explicit ", <state>" hint and raises a clarification error
+   when two states are equally plausible.
+
+A name is never silently swapped for a same-named locality in another
+state: that is exactly how "Shirdi" used to become a Khammam hamlet.
 """
 
 import json
@@ -7,8 +21,10 @@ import re
 import time
 from pathlib import Path
 from difflib import SequenceMatcher
+
 from app.travel.resolver import (
     resolve_place,
+    resolve_origin_place,
     TravelResolverClarificationError,
     TravelResolverError,
     _within_geo_scope,
@@ -25,33 +41,45 @@ NAMES = json.loads(
 )["names"]
 CACHE = Path(".planning-runtime/origins")
 
+# A Telangana spelling match must be this close before the district list is
+# allowed to rewrite the user's text.
+TYPO_THRESHOLD = 0.86
+
 
 def normalized(s):
     return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
 
 
+def _strip_country_suffix(text: str) -> str:
+    return re.sub(r"\s+(telangana|india)$", "", text)
+
+
 def canonical_city(query):
     # Only whole, bare region names: NEVER turn a detailed locality into a city centre.
-    text = normalized(query)
-    text = re.sub(r"\s+(telangana|india)$", "", text)
+    text = _strip_country_suffix(normalized(query))
     ranked = sorted(
         ((SequenceMatcher(None, text, normalized(n)).ratio(), n) for n in NAMES),
         reverse=True,
     )
-    if ranked[0][0] >= 0.86 and (
+    if ranked[0][0] >= TYPO_THRESHOLD and (
         ranked[0][0] == 1 or ranked[0][0] - ranked[1][0] >= 0.08
     ):
         return ranked[0][1]
     return None
 
 
-def resolve_origin(query):
-    city = canonical_city(query)
-    if not city:
-        return resolve_place(query)
+def _is_explicit_telangana(query: str) -> bool:
+    return normalized(query).endswith(" telangana")
+
+
+def _telangana_from_registry(city: str):
     registered = _resolve_from_geography_registry(city)
     if registered and registered.canonical_entity_type in {"city", "town"}:
-        return registered.model_copy(update={"query": query})
+        return registered
+    return None
+
+
+def _telangana_from_geocoder(query: str, city: str) -> ResolvedPlace:
     key = normalized(city).replace(" ", "-")
     cache = CACHE / (key + ".json")
     try:
@@ -87,7 +115,7 @@ def resolve_origin(query):
             and SequenceMatcher(
                 None, normalized(c.display_name.split(",")[0]), normalized(city)
             ).ratio()
-            >= 0.86
+            >= TYPO_THRESHOLD
         ]
         if settlements:
             break
@@ -111,6 +139,9 @@ def resolve_origin(query):
         coordinates=Coordinate(latitude=first.latitude, longitude=first.longitude),
         source="nominatim_city",
         confidence=0.95,
+        state=first.state or "Telangana",
+        country=first.country,
+        country_code=first.country_code,
     )
     try:
         CACHE.mkdir(parents=True, exist_ok=True)
@@ -129,3 +160,30 @@ def resolve_origin(query):
     except OSError:
         pass
     return result
+
+
+def resolve_origin(query):
+    """Resolve a starting location, Telangana-typo-tolerant and nationwide."""
+    raw = (query or "").strip()
+    if not raw:
+        raise TravelResolverError("Starting location cannot be empty.")
+
+    city = canonical_city(raw)
+
+    # Explicit "... Telangana" always stays on the Telangana path, even if
+    # the spelling is close to a district name.
+    if city or _is_explicit_telangana(raw):
+        target = city or raw
+        registered = _telangana_from_registry(target)
+        if registered is not None:
+            return registered.model_copy(update={"query": raw})
+        try:
+            return _telangana_from_geocoder(raw, target)
+        except TravelResolverClarificationError:
+            raise
+        except TravelResolverError:
+            # Not a Telangana place after all - fall through to nationwide.
+            pass
+
+    # Nationwide resolution (India only, settlements preferred).
+    return resolve_origin_place(raw)

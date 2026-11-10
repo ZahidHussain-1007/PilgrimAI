@@ -181,11 +181,24 @@ def catalog(ids: list[str], start: date, days: int) -> list[TempleEvidence]:
 def origin_point(text: str) -> dict:
     import re
 
+    from app.core.config import settings
+    from app.travel.resolver import _parse_bbox
+
     match = re.fullmatch(r"\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*", text)
     if match:
         lat, lng = float(match[1]), float(match[2])
-        if not (15.6 <= lat <= 20.3 and 76.6 <= lng <= 81.5):
-            raise ValueError("Coordinates are outside the Telangana service area.")
+        # v23.2: origins are nationwide; validate against the origin box
+        # (India + margin), not the Telangana catalogue box.
+        bbox = _parse_bbox(settings.origin_bbox)
+        if bbox is not None:
+            min_lat, min_lon, max_lat, max_lon = bbox
+            if not (
+                min_lat <= lat <= max_lat and min_lon <= lng <= max_lon
+            ):
+                raise ValueError(
+                    f"Coordinates are outside the supported origin area "
+                    f"({settings.origin_country}). Enter a city name instead."
+                )
         return {
             "id": "origin",
             "name": text,
@@ -205,6 +218,8 @@ def origin_point(text: str) -> dict:
         "lng": place.coordinates.longitude,
         "source": place.source,
         "confidence": place.confidence,
+        "state": getattr(place, "state", None),
+        "country": getattr(place, "country", None),
     }
 
 
