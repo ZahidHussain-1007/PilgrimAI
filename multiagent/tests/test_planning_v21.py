@@ -638,6 +638,14 @@ def test_unselected_candidates_distinguish_feasible_lower_rank_from_failed_check
 
 
 def test_conditional_overnight_draft_retains_days_without_inventing_a_hotel():
+    """v23.2 contract: an accepted unverified stay produces a *conditional*
+    draft - routable, every day accounted for, and explicitly flagged as
+    unverified - instead of an unusable empty plan.
+
+    Everything that protects honesty is still asserted: no property is
+    selected, no check-in/out is invented, and the stay is reported as
+    unverified both in the warnings and in the budget ledger.
+    """
     req = request(
         days=2,
         stay="hotel",
@@ -647,10 +655,22 @@ def test_conditional_overnight_draft_retains_days_without_inventing_a_hotel():
         time_grid_minutes=5,
     )
     plan, b, _, _, opts, _ = run(req, travel=13)
-    assert not plan["feasible"]
-    assert "HOTEL_REQUIREMENTS_UNVERIFIED" in codes(plan)
+    # It is routable now, so the traveller gets a draft instead of nothing.
+    assert plan["feasible"], plan["conflicts"]
+    assert "HOTEL_REQUIREMENTS_UNVERIFIED" not in codes(plan)
+    # ...but the unverified stay is still reported, as a warning.
+    assert "STAY_UNVERIFIED" in {
+        w["code"] for w in plan["validation"]["warnings"]
+    }, plan["validation"]["warnings"]
     assert "PRIMARY_TEMPLE_MISSING" not in codes(plan), plan["conflicts"]
-    assert all(any(i["type"] == "visit" for i in d["items"]) for d in plan["days"])
+    # No day is empty: each has a visit, a check-in/out or a real journey.
+    from app.planning.solver import day_purpose
+
+    lodging = (opts.get("selected_hotel") or opts.get("overnight_area") or {}).get("id")
+    assert all(
+        day_purpose(d, i, len(plan["days"]), lodging_id=lodging) is not None
+        for i, d in enumerate(plan["days"])
+    ), plan["days"]
     assert (
         opts["selected_hotel"] is None
         and opts["overnight_area"]["kind"] == "overnight_area"
