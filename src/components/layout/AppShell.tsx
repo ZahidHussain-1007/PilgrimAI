@@ -68,7 +68,10 @@ export function AppShell({ children }: { children: ReactNode }) {
         <header className="topbar">
           <button className="menu-toggle" aria-label="Open navigation" aria-expanded={open} onClick={() => setOpen(true)}>☰</button>
           <span className="mobile-brand"><span className="brand-mark">ॐ</span>PilgrimAI</span>
-          <span className="quiet-label hidden md:inline">A quieter way to travel</span>
+          <div className="flex flex-col items-start justify-center gap-1">
+            <div className="text-xl font-semibold italic leading-tight"><i>Let every journey begin with devotion.</i></div>
+            <div className="text-xs font-normal leading-tight">Inspired by the Bhagavad Gita · 9.34</div>
+          </div>
           <div className="topbar-right ml-auto">
             {user ? (
               <div className="flex items-center gap-3">

@@ -2,11 +2,9 @@
 import Link from "next/link"
 import { TempleSlideshow, type Slide } from "./TempleSlideshow"
 import { useT } from "../../lib/i18n"
-import { BoltIcon, CalendarIcon, ClockIcon, PinIcon, RouteIcon, TempleIcon } from "../ui/icons"
+import { CalendarIcon, RouteIcon, TempleIcon } from "../ui/icons"
 
-/** v19.6: layout bug fixed — the page grows instead of squeezing (previous
- *  flex-1 + min-h-0 compressed the main grid and the stats strip painted
- *  over overflowing content). Stats now sit in normal flow at the bottom. */
+/** Landing content flows naturally; the decorative landscape remains behind it. */
 export function LandingContent({ slides }: { slides: Slide[] }) {
   const { t } = useT()
   const steps = [
@@ -14,13 +12,6 @@ export function LandingContent({ slides }: { slides: Slide[] }) {
     { title: t("landing.step2Title"), body: t("landing.step2Body"), Icon: CalendarIcon },
     { title: t("landing.step3Title"), body: t("landing.step3Body"), Icon: RouteIcon },
   ]
-  const stats = [
-    { value: "23", label: t("stats.temples"), Icon: TempleIcon },
-    { value: "Real", label: t("stats.distances"), Icon: RouteIcon },
-    { value: "Honest", label: t("stats.timings"), Icon: ClockIcon },
-    { value: "Constraint-aware", label: t("stats.itineraries"), Icon: BoltIcon },
-  ]
-
   return (
     <div className="relative flex min-h-full flex-col">
       {/* bottom decorative landscape — behind content, low opacity */}
@@ -69,17 +60,7 @@ export function LandingContent({ slides }: { slides: Slide[] }) {
                 <RouteIcon size={18} />
                 {t("landing.cta")}
               </Link>
-              <Link
-                href="/plan"
-                className="inline-flex h-[50px] items-center gap-2.5 rounded-full border border-[#e9d8c1] bg-[#fffdf9] px-7 text-[15px] font-medium text-[#79440f] transition hover:bg-[#f5e9d7]"
-              >
-                <TempleIcon size={18} />
-                {t("landing.explore")}
-              </Link>
             </div>
-            <p className="mt-4 text-[12px] text-[#9a8f7b]">
-              {t("landing.note")}
-            </p>
           </div>
 
           <div className="lg:border-l lg:border-[#e9d8c1] lg:pl-10">
@@ -112,21 +93,6 @@ export function LandingContent({ slides }: { slides: Slide[] }) {
               ))}
             </div>
           </div>
-        </div>
-
-        {/* STATS — normal flow, never overlapping */}
-        <div className="stats-strip mx-auto flex h-[75px] w-full max-w-[915px] shrink-0 items-center divide-x divide-[#e9d8c1] rounded-full border border-[#e9d8c1] bg-[#fffdf9]/90">
-          {stats.map((stat) => (
-            <div key={stat.label} className="flex flex-1 items-center justify-center gap-3 px-4">
-              <span className="text-[#b66a13]" aria-hidden="true">
-                <stat.Icon size={22} />
-              </span>
-              <div className="text-left">
-                <p className="text-[15px] font-bold leading-5 text-[#29251f]">{stat.value}</p>
-                <p className="stat-label text-[12px] leading-4 text-[#796b5d]">{stat.label}</p>
-              </div>
-            </div>
-          ))}
         </div>
       </div>
     </div>

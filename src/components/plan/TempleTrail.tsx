@@ -1,6 +1,13 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import {
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react"
 import type { TempleSummary } from "../../lib/temples"
 import {
   ROUTE_D,
@@ -87,13 +94,154 @@ export function TempleTrail({
   // popup opens only after an explicit click — the default active
   // highlight (Yadadri) never forces a detail card open
   const [popupFor, setPopupFor] = useState<string | null>(null)
+  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const [dragging, setDragging] = useState(false)
+  const [popupPosition, setPopupPosition] = useState<{ left: number; top: number } | null>(null)
+  const frameRef = useRef<HTMLDivElement>(null)
+  const popupRef = useRef<HTMLDivElement>(null)
+  const dragRef = useRef<{
+    pointerId: number
+    startX: number
+    startY: number
+    originX: number
+    originY: number
+    moved: boolean
+  } | null>(null)
+  const suppressClickRef = useRef(false)
   const S = ZOOM_S[level]
   const nodes = useMemo(() => buildTrailNodes(temples, level), [temples, level])
   const popupNode: TrailNode | null = nodes.find((n) => n.temple.templeId === popupFor) || null
 
-  const tx = (x: number) => 500 + (x - 500) * S
-  const ty = (y: number) => 230 + (y - 230) * S
+  const tx = (x: number) => pan.x + 500 + (x - 500) * S
+  const ty = (y: number) => pan.y + 230 + (y - 230) * S
   const placed = useMemo(() => placeLabels(nodes, activeId, nodes), [nodes, activeId])
+
+  useLayoutEffect(() => {
+    const frame = frameRef.current
+    const popup = popupRef.current
+    if (!popupNode || !frame || !popup) {
+      setPopupPosition(null)
+      return
+    }
+
+    const updatePosition = () => {
+      const bounds = frame.getBoundingClientRect()
+      const popupBounds = popup.getBoundingClientRect()
+      if (!bounds.width || !bounds.height || !popupBounds.width || !popupBounds.height) return
+
+      // The SVG uses xMidYMid meet, so account for any letterboxing when
+      // translating its viewBox point to the popup's pixel position.
+      const scale = Math.min(bounds.width / VB_W, bounds.height / VB_H)
+      const offsetX = (bounds.width - VB_W * scale) / 2
+      const offsetY = (bounds.height - VB_H * scale) / 2
+      const anchorX = offsetX + tx(popupNode.x) * scale
+      const anchorY = offsetY + ty(popupNode.y) * scale
+      const margin = 8
+      const maxLeft = Math.max(margin, bounds.width - popupBounds.width - margin)
+      const left = Math.min(maxLeft, Math.max(margin, anchorX - popupBounds.width / 2))
+
+      // Prefer above the selected marker, then below it; clamp either choice
+      // so the whole detail card stays inside the map frame.
+      let top = anchorY - popupBounds.height - 14
+      if (top < margin) top = anchorY + 14
+      const maxTop = Math.max(margin, bounds.height - popupBounds.height - margin)
+      top = Math.min(maxTop, Math.max(margin, top))
+
+      setPopupPosition((current) =>
+        current && Math.abs(current.left - left) < 0.5 && Math.abs(current.top - top) < 0.5
+          ? current
+          : { left, top },
+      )
+    }
+
+    updatePosition()
+    const observer = new ResizeObserver(updatePosition)
+    observer.observe(frame)
+    observer.observe(popup)
+    return () => observer.disconnect()
+  }, [popupNode, S, pan.x, pan.y])
+
+  function onFramePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return
+    if (event.target instanceof Element && event.target.closest("button, [data-trail-popup]")) return
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: pan.x,
+      originY: pan.y,
+      moved: false,
+    }
+  }
+
+  function onFramePointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    const deltaX = event.clientX - drag.startX
+    const deltaY = event.clientY - drag.startY
+    if (!drag.moved && Math.hypot(deltaX, deltaY) < 4) return
+
+    if (!drag.moved) {
+      drag.moved = true
+      event.currentTarget.setPointerCapture(event.pointerId)
+      setDragging(true)
+    }
+    event.preventDefault()
+
+    const bounds = frameRef.current?.getBoundingClientRect()
+    const viewScale = bounds
+      ? Math.min(bounds.width / VB_W, bounds.height / VB_H)
+      : 1
+    const limitX = 120 + (VB_W * (S - 1)) / 2
+    const limitY = 70 + (VB_H * (S - 1)) / 2
+    const nextX = drag.originX + deltaX / viewScale
+    const nextY = drag.originY + deltaY / viewScale
+    const draggingPastHorizontalEdge =
+      (nextX <= -limitX && deltaX < 0) || (nextX >= limitX && deltaX > 0)
+    if (draggingPastHorizontalEdge && level < ZOOM_S.length - 1) {
+      // Edge-drag reveals the next detail level instead of making the user
+      // stop and press the zoom button to discover more temples.
+      setLevel(level + 1)
+    }
+    setPan({
+      x: Math.max(-limitX, Math.min(limitX, nextX)),
+      y: Math.max(-limitY, Math.min(limitY, nextY)),
+    })
+  }
+
+  function finishFramePointer(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    if (drag.moved) {
+      suppressClickRef.current = true
+      window.setTimeout(() => {
+        suppressClickRef.current = false
+      }, 400)
+    }
+    dragRef.current = null
+    setDragging(false)
+  }
+
+  function onFrameClickCapture(event: ReactMouseEvent<HTMLDivElement>) {
+    if (!suppressClickRef.current) return
+    event.preventDefault()
+    event.stopPropagation()
+    suppressClickRef.current = false
+  }
+
+  function onFrameClick(event: ReactMouseEvent<HTMLDivElement>) {
+    const target = event.target
+    if (
+      target instanceof Element &&
+      target.closest("[data-trail-popup], [data-temple-marker], [data-temple-option]")
+    ) {
+      return
+    }
+    if (popupFor) {
+      setPopupFor(null)
+      onActivate("")
+    }
+  }
 
   function openTemple(id: string) {
     setLevel(2)
@@ -103,7 +251,16 @@ export function TempleTrail({
   }
 
   return (
-    <div className="relative h-full w-full overflow-hidden rounded-[22px] border border-[#e9d8c1] bg-[#fbf6ec]">
+    <div
+      ref={frameRef}
+      onPointerDown={onFramePointerDown}
+      onPointerMove={onFramePointerMove}
+      onPointerUp={finishFramePointer}
+      onPointerCancel={finishFramePointer}
+      onClickCapture={onFrameClickCapture}
+      onClick={onFrameClick}
+      className={`relative h-full w-full overflow-hidden rounded-[22px] border border-[#e9d8c1] bg-[#fbf6ec] touch-none select-none ${dragging ? "cursor-grabbing" : "cursor-grab"}`}
+    >
       <svg
         viewBox={`0 0 ${VB_W} ${VB_H}`}
         className="h-full w-full"
@@ -111,7 +268,7 @@ export function TempleTrail({
         aria-label={t("discover.trailLabel")}
       >
         {/* soft decor — low contrast, scaled with zoom */}
-        <g transform={`translate(${500 - 500 * S} ${230 - 230 * S}) scale(${S})`}>
+        <g transform={`translate(${pan.x + 500 - 500 * S} ${pan.y + 230 - 230 * S}) scale(${S})`}>
           <rect x="0" y="0" width={VB_W} height={VB_H} fill="#fbf6ec" />
           <circle cx="560" cy="118" r="46" fill="#efd9ae" opacity="0.55" />
           <circle cx="560" cy="118" r="66" fill="#efd9ae" opacity="0.18" />
@@ -148,6 +305,7 @@ export function TempleTrail({
             <g key={node.temple.templeId}>
               {isActive && <circle cx={cx} cy={cy} r={r + 12} fill="#e2b260" opacity="0.22" />}
               <g
+                data-temple-marker
                 className="cursor-pointer"
                 onClick={() => {
                   onActivate(node.temple.templeId)
@@ -198,7 +356,7 @@ export function TempleTrail({
             <text
               key={id}
               x={tx(node.x)}
-              y={label.y}
+              y={ty(label.y)}
               textAnchor="middle"
               fontSize={LABEL_FONT}
               fontWeight={600}
@@ -245,6 +403,7 @@ export function TempleTrail({
                 <li key={tm.templeId}>
                   <button
                     type="button"
+                    data-temple-option
                     onClick={() => openTemple(tm.templeId)}
                     className="flex w-full items-center justify-between gap-2 px-3.5 py-1.5 text-left text-[12px] text-[#4a4436] transition hover:bg-[#f6efe3]"
                   >
@@ -292,8 +451,8 @@ export function TempleTrail({
       {popupNode && (
         <TrailPopup
           node={popupNode}
-          vbW={VB_W}
-          vbH={VB_H}
+          popupRef={popupRef}
+          position={popupPosition}
           selected={selectedIds.includes(popupNode.temple.templeId)}
           onAdd={() => onAdd(popupNode.temple.templeId)}
           onClose={() => {
@@ -327,32 +486,41 @@ function ActiveNameplate({ node, cx, cy, r }: { node: TrailNode; cx: number; cy:
 
 function TrailPopup({
   node,
-  vbW,
-  vbH,
+  popupRef,
+  position,
   selected,
   onAdd,
   onClose,
 }: {
   node: TrailNode
-  vbW: number
-  vbH: number
+  popupRef: { current: HTMLDivElement | null }
+  position: { left: number; top: number } | null
   selected: boolean
   onAdd: () => void
   onClose: () => void
 }) {
   const { t } = useT()
-  const leftPct = Math.min(72, Math.max(3, (node.x / vbW) * 100))
-  const topPct = Math.min(70, Math.max(6, (node.y / vbH) * 100 - 6))
   return (
     <div
+      ref={popupRef}
+      data-trail-popup
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
       className="absolute z-30 w-[236px] rounded-2xl border-2 border-[#e2b26a] bg-[#fffdf9] p-3 shadow-[0_10px_28px_rgba(41,37,31,0.18)]"
-      style={{ left: `${leftPct}%`, top: `${topPct}%`, transform: "translate(-32%, -104%)" }}
+      style={{
+        left: position?.left ?? 8,
+        top: position?.top ?? 8,
+        maxWidth: "calc(100% - 16px)",
+        maxHeight: "calc(100% - 16px)",
+        overflowY: "auto",
+        visibility: position ? "visible" : "hidden",
+      }}
     >
       <button
         type="button"
         onClick={onClose}
         aria-label={t("discover.close")}
-        className="absolute right-2 top-1.5 text-sm text-[#9a8f7b] hover:text-[#29251f]"
+        className="absolute right-1 top-1 grid h-7 w-7 place-items-center rounded-full bg-[#fffdf9]/90 text-[18px] font-medium leading-none text-[#796b5d] shadow-sm transition hover:bg-[#f5e9d7] hover:text-[#29251f]"
       >
         ×
       </button>
