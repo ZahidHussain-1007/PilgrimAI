@@ -14,11 +14,7 @@ export type TempleSummary = {
   lon: number
   videoUrls?: string[]
   videoUrl: string | null
-  /**
-   * Direct, self-hosted footage when the team drops an owned/licensed file at
-   * public/videos/{templeId}.mp4|webm|ogv (checked at data-load time). When
-   * present the trip player uses a clean HTML5 <video> instead of YouTube.
-   */
+  /** No self-hosted source is available; temple playback uses its YouTube URL. */
   videoFile: string | null
   image: string | null
   summary: string
@@ -66,15 +62,7 @@ export function loadTemples(): TempleSummary[] {
         lon: Number(loc.longitude) || 0,
         videoUrl: r.video_url || null,
         videoUrls: Array.isArray(r.video_urls) ? r.video_urls : r.video_url ? [r.video_url] : [],
-        videoFile: (() => {
-          const id = r.temple_id || file.replace(".json", "")
-          for (const ext of ["mp4", "webm", "ogv"]) {
-            if (fs.existsSync(path.join(process.cwd(), "public", "videos", `${id}.${ext}`))) {
-              return `/videos/${id}.${ext}`
-            }
-          }
-          return null
-        })(),
+        videoFile: null,
         image: typeof images[0] === "string" && images[0].startsWith("http") ? images[0] : null,
         summary: typeof r.summary === "string" ? r.summary : "",
         darshanHours: morning || null,

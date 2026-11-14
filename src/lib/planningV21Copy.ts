@@ -581,9 +581,24 @@ Object.assign(planningV21Copy, {
 });
 Object.assign(planningV21Copy, {
   submitting: [
-    "Sending your planning request…",
-    "మీ యాత్ర అభ్యర్థనను పంపుతున్నాము…",
-    "आपका यात्रा अनुरोध भेज रहे हैं…",
+    "Sending your trip request…",
+    "మీ ప్రయాణ అభ్యర్థనను పంపుతున్నాము…",
+    "आपकी यात्रा का अनुरोध भेजा जा रहा है…",
+  ],
+  readyOpening: [
+    "Your itinerary is ready. Opening it shortly…",
+    "మీ ప్రణాళిక సిద్ధంగా ఉంది. త్వరలో తెరుచుకుంటుంది…",
+    "आपकी यात्रा योजना तैयार है। अभी खुल रही है…",
+  ],
+  videoBlocked: [
+    "Playback is paused. Use Play to start the preview.",
+    "వీడియో ఆగింది. ప్రివ్యూను ప్రారంభించడానికి ప్లే నొక్కండి.",
+    "वीडियो रुका है। पूर्वावलोकन शुरू करने के लिए चलाएँ दबाएँ।",
+  ],
+  videoRecovery: [
+    "Video playback is unavailable. Your itinerary will open as soon as planning finishes.",
+    "వీడియో ప్లేబ్యాక్ అందుబాటులో లేదు. ప్రణాళిక పూర్తయ్యాక యాత్ర ప్రణాళిక తెరుచుకుంటుంది.",
+    "वीडियो नहीं चल पा रहा है। योजना पूरी होते ही यात्रा योजना खुल जाएगी।",
   ],
   overnightConflict: [
     "Overnight travel needs at least two days and an accommodation preference (hotel, guest house or dharamshala). For a one-day trip, choose “Return to starting location each day”.",

@@ -17,11 +17,21 @@ export type VideoItem = {
   fileUrl: string | null
   /** YouTube id — only for entries without an owned file. */
   ytId: string | null
+  /** Validated original YouTube watch URL, including for local-file playback. */
+  watchUrl?: string | null
   title: string
   image: string | null
 }
 
-type Phase = "loading" | "playing" | "paused" | "blocked" | "empty"
+export type PlaybackState =
+  | "loading"
+  | "playing"
+  | "paused"
+  | "buffering"
+  | "blocked"
+  | "failed"
+  | "empty"
+type Phase = PlaybackState
 type Engine = "html5" | "youtube" | "none"
 
 declare global {
@@ -84,11 +94,20 @@ function loadYT(): Promise<any> {
  *   src/lib/youtube.ts for the full per-parameter account.
  */
 /**
- * The app's own fullscreen button (the only remaining fullscreen path once
- * YouTube's control bar is hidden with controls:0 and its button with fs:0).
- * Set to false to remove the control entirely.
+ * The full-viewport YouTube experience leaves fullscreen to the official
+ * player, rather than layering an app control over provider controls.
  */
 const SHOW_FULLSCREEN_CONTROL = true
+
+/** Keep the default provider UI outside the waiting screen. */
+export function youtubePlayerVars(hideProviderControls: boolean) {
+  return {
+    ...YOUTUBE_EMBED_PARAMS,
+    // This override is deliberately after the shared defaults: the planning
+    // waiting screen must pass controls=0 to the actual YT.Player instance.
+    ...(hideProviderControls ? { controls: 0 } : {}),
+  }
+}
 
 export function TempleVideoPlayer({
   items,
@@ -97,17 +116,22 @@ export function TempleVideoPlayer({
   onPrev,
   onNext,
   onVideoError,
+  onPlaybackStateChange,
   fillViewport = false,
   showControls = true,
+  hideProviderControls = false,
 }: {
   fillViewport?: boolean
   showControls?: boolean
+  /** Waiting-screen-only: hide YouTube's visible control bar. */
+  hideProviderControls?: boolean
   items: VideoItem[]
   index: number
   onEnded: () => void
   onPrev: () => void
   onNext: () => void
   onVideoError: (videoId: string) => void
+  onPlaybackStateChange?: (state: PlaybackState) => void
 }) {
   const { t } = useT()
   const frameRef = useRef<HTMLDivElement>(null)
@@ -120,8 +144,20 @@ export function TempleVideoPlayer({
   const loadedYtIdRef = useRef<string | null>(null)
   const gotPlayingRef = useRef(false)
   const attemptedRef = useRef(false)
-  const callbacksRef = useRef({ onEnded, onPrev, onNext, onVideoError })
-  callbacksRef.current = { onEnded, onPrev, onNext, onVideoError }
+  const callbacksRef = useRef({
+    onEnded,
+    onPrev,
+    onNext,
+    onVideoError,
+    onPlaybackStateChange,
+  })
+  callbacksRef.current = {
+    onEnded,
+    onPrev,
+    onNext,
+    onVideoError,
+    onPlaybackStateChange,
+  }
 
   const [phase, setPhase] = useState<Phase>(items.length ? "loading" : "empty")
   const [quality, setQuality] = useState("adaptive")
@@ -190,7 +226,7 @@ export function TempleVideoPlayer({
           videoId,
           // Documented in src/lib/youtube.ts — only supported params,
           // no CSS/cropping workarounds.
-          playerVars: { ...YOUTUBE_EMBED_PARAMS },
+          playerVars: youtubePlayerVars(hideProviderControls),
           events: {
             onReady: (e: any) => {
               if (gen !== ytGenRef.current) return
@@ -215,6 +251,7 @@ export function TempleVideoPlayer({
                 setPhase("playing")
                 setQuality(requestHighestVideoQuality(e.target))
               } else if (s === 0) {
+                setPhase("buffering")
                 if (itemsRef.current.length <= 1) {
                   try {
                     e.target.seekTo(0, true)
@@ -227,6 +264,8 @@ export function TempleVideoPlayer({
                 if (attemptedRef.current && !gotPlayingRef.current)
                   setPhase("blocked")
                 else if (gotPlayingRef.current) setPhase("paused")
+              } else if (s === 3) {
+                setPhase("buffering")
               } else if (s === 5) {
                 if (attemptedRef.current && !gotPlayingRef.current)
                   setPhase("blocked")
@@ -242,6 +281,7 @@ export function TempleVideoPlayer({
                 "videoId=",
                 vid,
               )
+              setPhase("failed")
               if (vid) callbacksRef.current.onVideoError(vid)
             },
           },
@@ -253,9 +293,10 @@ export function TempleVideoPlayer({
         if (gen === ytGenRef.current) {
           ytCreatingRef.current = false
           setApiFailed(true)
+          setPhase("failed")
         }
       })
-  }, [])
+  }, [hideProviderControls])
 
   // ---- engine switch + playlist changes (single source of truth) -------
   useEffect(() => {
@@ -294,6 +335,14 @@ export function TempleVideoPlayer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, currentVideoId])
 
+  useEffect(() => {
+    setApiFailed(false)
+  }, [currentVideoId])
+
+  useEffect(() => {
+    callbacksRef.current.onPlaybackStateChange?.(phase)
+  }, [phase])
+
   // full teardown on unmount
   useEffect(() => () => destroyYT(), [destroyYT])
 
@@ -317,6 +366,7 @@ export function TempleVideoPlayer({
   }, [engine, currentVideoId])
 
   const handleEnded = useCallback(() => {
+    setPhase("buffering")
     const v = videoRef.current
     if (itemsRef.current.length <= 1) {
       // single temple → repeat continuously (no native loop attr: playlist
@@ -389,8 +439,91 @@ export function TempleVideoPlayer({
 
   const many = items.length > 1
   const isPlaying = phase === "playing"
+  const watchUrl =
+    current?.watchUrl ??
+    (current?.ytId ? youtubeWatchUrl(current.ytId) : null)
   const canShowControls =
-    showControls && Boolean(current) && !(engine === "youtube" && apiFailed)
+    // YouTube supplies the keyboard- and screen-reader-accessible playback
+    // controls inside its official player. Do not duplicate them with app UI.
+    showControls && engine === "html5" && Boolean(current)
+  const playbackControls = (
+    <>
+      <button
+        type="button"
+        onClick={togglePlay}
+        aria-label={isPlaying ? t("plan.pauseVideo") : t("plan.playVideo")}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-[#e9d8c1] bg-white px-3 py-1.5 text-xs font-semibold text-[#79440f] transition hover:bg-[#faf4e8] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b66a13]/30"
+      >
+        {isPlaying ? (
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            aria-hidden="true"
+          >
+            <rect x="6" y="5" width="4" height="14" rx="1" />
+            <rect x="14" y="5" width="4" height="14" rx="1" />
+          </svg>
+        ) : (
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            aria-hidden="true"
+          >
+            <path d="M8 5.5v13l11-6.5z" />
+          </svg>
+        )}
+        {isPlaying ? t("plan.pauseVideo") : t("plan.playVideo")}
+      </button>
+
+      {many && (
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={onPrev}
+            aria-label={t("plan.prev")}
+            className="grid h-7 w-7 place-items-center rounded-lg border border-[#e9d8c1] bg-white text-[#79440f] transition hover:bg-[#faf4e8] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b66a13]/30"
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              aria-hidden="true"
+            >
+              <path d="M15.5 5.5v13L7 12z" />
+              <rect x="5" y="5.5" width="2.2" height="13" rx="1" />
+            </svg>
+          </button>
+          <span className="min-w-[52px] text-center text-[11px] font-semibold tabular-nums text-[#796b5d]">
+            {t("plan.videoOf")
+              .replace("{i}", String(index + 1))
+              .replace("{n}", String(items.length))}
+          </span>
+          <button
+            type="button"
+            onClick={onNext}
+            aria-label={t("plan.next")}
+            className="grid h-7 w-7 place-items-center rounded-lg border border-[#e9d8c1] bg-white text-[#79440f] transition hover:bg-[#faf4e8] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b66a13]/30"
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              aria-hidden="true"
+            >
+              <path d="M8.5 5.5v13L17 12z" />
+              <rect x="16.8" y="5.5" width="2.2" height="13" rx="1" />
+            </svg>
+          </button>
+        </div>
+      )}
+    </>
+  )
 
   return (
     <div className={fillViewport ? "h-full w-full" : undefined}>
@@ -399,13 +532,16 @@ export function TempleVideoPlayer({
         ref={frameRef}
         className={
           fillViewport
-            ? "relative h-full w-full overflow-hidden bg-black"
+            ? "fixed inset-0 grid h-screen h-[100dvh] place-items-center overflow-hidden bg-[radial-gradient(circle_at_50%_40%,#735438_0%,#4a3424_48%,#241a15_100%)]"
             : "relative aspect-video w-full overflow-hidden rounded-2xl bg-black shadow-[0_10px_30px_rgba(41,37,31,0.16)]"
         }
         data-playback={engine === "youtube" && apiFailed ? "error" : phase}
         data-quality={quality}
         data-engine={engine}
         data-video-id={currentVideoId ?? ""}
+        data-provider-controls={
+          engine === "youtube" ? (hideProviderControls ? "0" : "1") : undefined
+        }
       >
         {/* owned/licensed footage → clean HTML5 player (no controls attr) */}
         {engine === "html5" && current?.fileUrl && (
@@ -417,17 +553,21 @@ export function TempleVideoPlayer({
             muted
             playsInline
             preload="auto"
-            className="absolute inset-0 h-full w-full border-0 object-cover"
+            className={`absolute left-1/2 top-1/2 aspect-video w-[min(100vw,177.7778dvh)] -translate-x-1/2 -translate-y-1/2 border-0 object-contain ${fillViewport ? "object-center" : ""}`}
             onPlaying={() => {
               gotPlayingRef.current = true
               setPhase("playing")
             }}
+            onWaiting={() => setPhase("buffering")}
+            onStalled={() => setPhase("buffering")}
             onPause={() => {
-              if (gotPlayingRef.current && videoRef.current?.ended === false)
-                setPhase("paused")
+              if (videoRef.current?.ended === false) setPhase("paused")
             }}
             onEnded={handleEnded}
-            onError={handleFileError}
+            onError={() => {
+              setPhase("failed")
+              handleFileError()
+            }}
           />
         )}
 
@@ -435,12 +575,12 @@ export function TempleVideoPlayer({
         {engine === "youtube" && (
           <div
             ref={mountRef}
-            className="absolute inset-0 [&_iframe]:absolute [&_iframe]:inset-0 [&_iframe]:h-full [&_iframe]:w-full [&_iframe]:border-0"
+            className="absolute left-1/2 top-1/2 aspect-video w-[min(100vw,177.7778dvh)] -translate-x-1/2 -translate-y-1/2 [&_iframe]:absolute [&_iframe]:inset-0 [&_iframe]:h-full [&_iframe]:w-full [&_iframe]:border-0"
           />
         )}
 
         {/* fullscreen — the ONLY overlay control on the picture */}
-        {SHOW_FULLSCREEN_CONTROL && engine !== "none" && (
+        {SHOW_FULLSCREEN_CONTROL && engine !== "none" && !fillViewport && (
           <button
             type="button"
             onClick={toggleFullscreen}
@@ -527,90 +667,21 @@ export function TempleVideoPlayer({
       </div>
 
       {/* ==== outside-the-picture controls (never cover the video) ====== */}
-      {canShowControls && (
+      {canShowControls && fillViewport && (
         <div
-          className={
-            fillViewport
-              ? "absolute left-1/2 top-20 z-20 flex max-w-[90vw] -translate-x-1/2 flex-wrap gap-2 rounded-xl bg-[#fffdf9]/95 p-2"
-              : "mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-2"
-          }
-          style={fillViewport ? { color: "#79440f" } : undefined}
+          className="absolute left-4 top-4 z-20 flex max-w-[90vw] flex-wrap gap-2 rounded-lg bg-black/75 p-2 text-white sr-only focus-within:not-sr-only"
+          data-player-accessibility-controls
+        >
+          {playbackControls}
+        </div>
+      )}
+
+      {canShowControls && !fillViewport && (
+        <div
+          className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-2"
           data-player-controls
         >
-          <button
-            type="button"
-            onClick={togglePlay}
-            aria-label={isPlaying ? t("plan.pauseVideo") : t("plan.playVideo")}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-[#e9d8c1] bg-white px-3 py-1.5 text-xs font-semibold text-[#79440f] transition hover:bg-[#faf4e8] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b66a13]/30"
-          >
-            {isPlaying ? (
-              <svg
-                width="12"
-                height="12"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-                aria-hidden="true"
-              >
-                <rect x="6" y="5" width="4" height="14" rx="1" />
-                <rect x="14" y="5" width="4" height="14" rx="1" />
-              </svg>
-            ) : (
-              <svg
-                width="12"
-                height="12"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-                aria-hidden="true"
-              >
-                <path d="M8 5.5v13l11-6.5z" />
-              </svg>
-            )}
-            {isPlaying ? t("plan.pauseVideo") : t("plan.playVideo")}
-          </button>
-
-          {many && (
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={onPrev}
-                aria-label={t("plan.prev")}
-                className="grid h-7 w-7 place-items-center rounded-lg border border-[#e9d8c1] bg-white text-[#79440f] transition hover:bg-[#faf4e8] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b66a13]/30"
-              >
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                  aria-hidden="true"
-                >
-                  <path d="M15.5 5.5v13L7 12z" />
-                  <rect x="5" y="5.5" width="2.2" height="13" rx="1" />
-                </svg>
-              </button>
-              <span className="min-w-[52px] text-center text-[11px] font-semibold tabular-nums text-[#796b5d]">
-                {t("plan.videoOf")
-                  .replace("{i}", String(index + 1))
-                  .replace("{n}", String(items.length))}
-              </span>
-              <button
-                type="button"
-                onClick={onNext}
-                aria-label={t("plan.next")}
-                className="grid h-7 w-7 place-items-center rounded-lg border border-[#e9d8c1] bg-white text-[#79440f] transition hover:bg-[#faf4e8] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b66a13]/30"
-              >
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                  aria-hidden="true"
-                >
-                  <path d="M8.5 5.5v13L17 12z" />
-                  <rect x="16.8" y="5.5" width="2.2" height="13" rx="1" />
-                </svg>
-              </button>
-            </div>
-          )}
+          {playbackControls}
 
           {current?.ytId && (
             <a
@@ -622,6 +693,35 @@ export function TempleVideoPlayer({
               {t("plan.watchOnYoutube")}
             </a>
           )}
+        </div>
+      )}
+
+      {!fillViewport && engine === "youtube" && watchUrl && (
+        <div className="mt-2.5 flex justify-end">
+          <a
+            href={watchUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[11px] font-semibold text-[#b66a13] underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b66a13]/30"
+          >
+            {t("plan.watchOnYoutube")}
+          </a>
+        </div>
+      )}
+
+      {fillViewport && watchUrl && (
+        <div
+          className="absolute bottom-4 left-1/2 z-20 -translate-x-1/2"
+          data-player-controls
+        >
+          <a
+            href={watchUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[11px] font-semibold text-white underline-offset-2 [text-shadow:0_1px_4px_rgba(0,0,0,.9)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+          >
+            {t("plan.watchOnYoutube")}
+          </a>
         </div>
       )}
     </div>

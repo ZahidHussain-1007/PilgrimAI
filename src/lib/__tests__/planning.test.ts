@@ -109,6 +109,16 @@ describe("real planning contracts", () => {
         if (!key.includes(" ")) expect(text).not.toBe(key);
       }
   });
+  it("uses explicit waiting and pre-acceptance copy in all supported languages", () => {
+    expect(planningT("en", "planningHeading")).toBe(
+      "Planning your itinerary…",
+    );
+    expect(planningT("en", "submitting")).toBe("Sending your trip request…");
+    for (const lang of ["te", "hi"] as const) {
+      expect(planningT(lang, "planningHeading")).not.toBe("planningHeading");
+      expect(planningT(lang, "submitting")).not.toBe("submitting");
+    }
+  });
   it("maps every one of the 23 temples to exactly one real clip", () => {
     const temples = loadTemples();
     expect(temples.length).toBe(23);

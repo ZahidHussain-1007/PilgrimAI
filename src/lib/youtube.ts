@@ -45,16 +45,14 @@ export function youtubeWatchUrl(videoId: string): string {
  *
  *   autoplay: 1        muted autoplay (browsers block audible autoplay)
  *   mute: 1            required for autoplay to be allowed at all
- *   controls: 0        hides YouTube's control bar (no gear, no CC button,
- *                      no YouTube fullscreen button while it is running)
- *   fs: 0              disables the fullscreen BUTTON in the control bar
+ *   controls: 1        keeps YouTube's own accessible playback controls
+ *   fs: 0              keeps the existing embedded-player fullscreen setting
  *   rel: 0             end-screen suggestions limited to the same channel
  *   playsinline: 1     iOS plays inline instead of forcing native fullscreen
  *   cc_load_policy: 0  captions are NOT loaded/forced on. This is a default,
  *                      not an override: a viewer who enabled captions in
  *                      their own YouTube account still gets them.
  *   iv_load_policy: 3  video annotations/cards off
- *   disablekb: 1       keyboard shortcuts off
  *
  * NOT included on purpose:
  *   modestbranding — retired by YouTube in August 2023 and now a no-op.
@@ -76,13 +74,12 @@ export function youtubeWatchUrl(videoId: string): string {
 export const YOUTUBE_EMBED_PARAMS = {
   autoplay: 1,
   mute: 1,
-  controls: 0,
+  controls: 1,
   rel: 0,
   playsinline: 1,
   fs: 0,
   cc_load_policy: 0,
   iv_load_policy: 3,
-  disablekb: 1,
 } as const;
 
 /**

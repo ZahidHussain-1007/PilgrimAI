@@ -5,6 +5,7 @@ import { useT } from "../../lib/i18n"
 import type { TempleSummary } from "../../lib/temples"
 import { TempleTrail } from "../../components/plan/TempleTrail"
 import { DiscoveryChat } from "../../components/plan/DiscoveryChat"
+import { TempleBrowser } from "../../components/plan/TempleBrowser"
 import TempleFinder from "../../components/plan/TempleFinder"
 import { EDIT_REQUEST } from "../../lib/planningSubmission"
 import type { PlanningRequest } from "../../lib/planning"
@@ -41,6 +42,10 @@ export function PlanClient({ temples: ALL }: { temples: TempleSummary[] }) {
   function addTemple(id: string) {
     setSelected((s) => (s.includes(id) ? s : [...s, id]))
   }
+  function removeTemple(id: string) {
+    setSelected((s) => s.filter((x) => x !== id))
+  }
+
   // ONE rule for every Continue button on this page: real selection +
   // navigation not already in flight.
   const selectedCount = selected.length
@@ -85,6 +90,8 @@ export function PlanClient({ temples: ALL }: { temples: TempleSummary[] }) {
       />
     )
   }
+
+  const selectedTemples = ALL.filter((tm) => selected.includes(tm.templeId))
 
   return (
     <div className="flex flex-col gap-4 px-5 py-5">
@@ -140,12 +147,8 @@ export function PlanClient({ temples: ALL }: { temples: TempleSummary[] }) {
             />
           </div>
 
-          {/* Entire help card opens the guided temple finder. */}
-          <button
-            type="button"
-            onClick={() => setView("find")}
-            className="group flex w-full flex-wrap items-center gap-x-4 gap-y-3 rounded-[22px] border border-[#e9d8c1] bg-[#fffdf9] px-5 py-4 text-left shadow-[0_4px_14px_rgba(41,37,31,0.05)] transition hover:border-[#d8bd91] hover:bg-[#fffaf1] hover:shadow-[0_8px_20px_rgba(41,37,31,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b66a13] focus-visible:ring-offset-2"
-          >
+          {/* help banner — opens the guided finder */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-[22px] border border-[#e9d8c1] bg-[#fffdf9] px-5 py-4 shadow-[0_4px_14px_rgba(41,37,31,0.05)]">
             <span
               className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-[#e8c9a0] bg-[#faf4e8]"
               aria-hidden="true"
@@ -165,21 +168,22 @@ export function PlanClient({ temples: ALL }: { temples: TempleSummary[] }) {
                 <path d="M7.5 14h4M7.5 17.5h7" />
               </svg>
             </span>
-            <span className="min-w-[180px] flex-1">
-              <span className="block font-serif text-[17px] font-semibold text-[#29251f]">
+            <div className="min-w-[180px] flex-1">
+              <p className="font-serif text-[17px] font-semibold text-[#29251f]">
                 {t("discover.helpTitle")}
-              </span>
-              <span className="mt-0.5 block text-[12.5px] leading-snug text-[#796b5d]">
+              </p>
+              <p className="mt-0.5 text-[12.5px] leading-snug text-[#796b5d]">
                 {t("discover.helpDesc")}
-              </span>
-            </span>
-            <span
-              className="ml-auto grid h-9 w-9 shrink-0 place-items-center rounded-full text-xl text-[#b66a13] transition-transform group-hover:translate-x-1"
-              aria-hidden="true"
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setView("find")}
+              className="ml-auto shrink-0 rounded-full bg-[#b66a13] px-5 py-2.5 text-[13px] font-semibold text-white transition hover:bg-[#99580d]"
             >
-              →
-            </span>
-          </button>
+              {t("discover.helpCta")} →
+            </button>
+          </div>
         </div>
 
         {/* bounded panel: the conversation scrolls INSIDE messages only —
@@ -193,6 +197,55 @@ export function PlanClient({ temples: ALL }: { temples: TempleSummary[] }) {
         </div>
       </div>
 
+      {/* searchable list — every temple stays reachable */}
+      <TempleBrowser temples={ALL} selectedIds={selected} onAdd={addTemple} />
+
+      {/* bottom bar — always present; same goTrip + canContinue as the top
+          toolbar so both buttons flip together with the shared selection */}
+      <div className="rounded-[22px] border border-[#e2b26a] bg-[#f6efe3] p-4">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <p className="text-[13px] font-semibold text-[#79440f]">
+            {t("discover.selectedCount").replace(
+              "{count}",
+              String(selectedCount),
+            )}
+          </p>
+          {selectedCount > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {selectedTemples.map((tm) => (
+                <span
+                  key={tm.templeId}
+                  className="flex items-center gap-1.5 rounded-full border border-[#e9d8c1] bg-[#fffdf9] py-1 pl-3 pr-1.5 text-[12px] font-medium text-[#4a4436]"
+                >
+                  {tm.name}
+                  <button
+                    type="button"
+                    onClick={() => removeTemple(tm.templeId)}
+                    aria-label={t("discover.removeTemple")}
+                    className="grid h-4 w-4 place-items-center rounded-full bg-[#e9d8c1] text-[10px] text-[#79440f] transition hover:bg-[#d9c3a0]"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          {!canContinue && (
+            <p className="text-[11.5px] text-[#9a8f7b]">
+              {t("discover.selectHint")}
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={goTrip}
+            disabled={!canContinue}
+            aria-label={t("discover.continue")}
+            className="ml-auto rounded-full bg-[#b66a13] px-5 py-2 text-sm font-semibold text-white transition hover:bg-[#99580d] disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            {t("discover.continue")}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

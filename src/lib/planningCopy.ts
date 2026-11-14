@@ -12,6 +12,16 @@ const copy: Record<string, [string, string, string]> = {
     "మీ తీర్థయాత్ర ప్రణాళికను సిద్ధం చేస్తున్నాము.",
     "हम आपकी तीर्थयात्रा योजना तैयार कर रहे हैं।",
   ],
+  planningHeading: [
+    "Planning your itinerary…",
+    "మీ ప్రయాణ ప్రణాళికను సిద్ధం చేస్తున్నాము…",
+    "आपकी यात्रा योजना तैयार हो रही है…",
+  ],
+  cancelHint: [
+    "Returns to trip details, where you can go back to temples.",
+    "ప్రయాణ వివరాలకు తిరిగి వెళ్లి, అక్కడి నుంచి ఆలయాలకు వెళ్లవచ్చు.",
+    "यात्रा विवरण पर लौटें; वहाँ से मंदिरों पर जा सकते हैं।",
+  ],
   waitBody: [
     "We’re checking temple information, journeys and your preferences. We will open your itinerary after it has been checked and saved.",
     "ఆలయ వివరాలు, మార్గాలు, మీ అభిరుచులను పరిశీలిస్తున్నాము. తనిఖీ చేసి సేవ్ చేసిన తర్వాత ప్రణాళిక తెరుచుకుంటుంది.",

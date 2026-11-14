@@ -61,10 +61,10 @@ import { YOUTUBE_EMBED_PARAMS } from "../youtube";
 
 describe("v23.1 official embed parameters", () => {
   it("sets only parameters YouTube still documents", () => {
-    expect(YOUTUBE_EMBED_PARAMS.fs).toBe(0) // YouTube fullscreen button off
+    expect(YOUTUBE_EMBED_PARAMS.fs).toBe(0) // existing fullscreen setting
     expect(YOUTUBE_EMBED_PARAMS.cc_load_policy).toBe(0) // captions not forced on
     expect(YOUTUBE_EMBED_PARAMS.iv_load_policy).toBe(3) // no annotations
-    expect(YOUTUBE_EMBED_PARAMS.controls).toBe(0) // no YouTube control bar
+    expect(YOUTUBE_EMBED_PARAMS.controls).toBe(1) // non-waiting player default
     expect(YOUTUBE_EMBED_PARAMS.rel).toBe(0)
     expect(YOUTUBE_EMBED_PARAMS.mute).toBe(1) // required for autoplay
     expect(YOUTUBE_EMBED_PARAMS.autoplay).toBe(1)
